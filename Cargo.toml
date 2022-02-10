@@ -1,0 +1,11 @@
+[package]
+name = "zebot2"
+version = "0.1.0"
+edition = "2021"
+authors = [ "Marcus Borkenhagen <m AT fritschy DOT de>" ]
+
+[dependencies]
+irc2 = { git = "https://github.com/fritschy/zebot.git", package = "irc2" }
+tokio = { version = "1", features = ["full"] }
+clap = { version = "3.0.14", features = ["derive"] }
+tokio-native-tls = "0.3.0"
