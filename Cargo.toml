@@ -8,4 +8,15 @@ authors = [ "Marcus Borkenhagen <m AT fritschy DOT de>" ]
 irc2 = { git = "https://github.com/fritschy/zebot.git", package = "irc2" }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "3.0.14", features = ["derive"] }
-tokio-native-tls = "0.3.0"
+
+tokio-rustls = { version = "0.23.2", optional = true }
+webpki-roots = { version = "0.22.2", optional = true }
+
+tokio-native-tls = { version = "0.3.0", optional = true }
+
+[features]
+default = ["tokio-rustls", "webpki-roots"]
+native-tls = ["tokio-native-tls"]
+
+[profile.release]
+lto = true
