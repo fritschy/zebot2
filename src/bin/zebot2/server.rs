@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::io;
-use std::net::ToSocketAddrs;
+use std::net::{ToSocketAddrs};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -14,8 +14,6 @@ pub(crate) enum ServerCommand {
     Message(String, String),
     Join(String),
     Leave(String),
-    Disconnect(String),
-    Connect { server: String, nick: irc2::Nickname },
     Quit,
     Logon { nick: String, realname: String },
 }
@@ -50,7 +48,7 @@ async fn connect_tls(args: &Settings) -> Result<tokio_rustls::client::TlsStream<
     Ok(connector.connect(domain, sock).await?)
 }
 
-async fn sock_send(sock: &mut tokio_rustls::client::TlsStream<TcpStream>, data: String) ->  Result<(), Box<dyn Error + Send + Sync>> {
+async fn sock_send<T: AsyncWriteExt + Unpin>(sock: &mut T, data: String) ->  Result<(), Box<dyn Error + Send + Sync>> {
     for part in data.split("\r\n").filter(|p| !p.is_empty()) {
         debug!("send: {}", part);
     }
@@ -76,6 +74,8 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                     ServerCommand::Quit => {
                         info!("Got quit message ...");
                         send.send(ClientCommand::ServerQuit("Received QUIT".to_string())).await?;
+                        sock_send(&mut sock, "QUIT :Need to restart the distributed real-time Java cluster VM\r\n".to_string()).await?;
+                        sock.flush().await?;
                         break;
                     }
 
@@ -95,8 +95,8 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                         sock_send(&mut sock, format!("JOIN :{}\r\n", chan)).await?;
                     }
 
-                    _ => {
-
+                    ServerCommand::Leave(chan) => {
+                        sock_send(&mut sock, format!("PART :{}\r\n", chan)).await?;
                     }
                 }
             }
@@ -117,14 +117,14 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
 
                 retries = 5;
 
-                let data = &buf[..rem + n];
+                let mut data = &buf[..rem + n];
                 let mut pos = 0;
 
-                loop {
-                    match irc2::parse(&data[pos..]) {
+                while !data.is_empty() {
+                    match irc2::parse(data) {
                         Ok((r, msg)) => {
                             use nom::Offset;
-                            pos = data.offset(r);
+                            data = r;
 
                             use irc2::command::CommandCode::*;
                             match msg.command {
@@ -150,11 +150,11 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                                 _ => (),
                             }
 
-                            send.send(ClientCommand::IRC(msg.clone())).await?;
+                            send.send(ClientCommand::Irc(msg.clone())).await?;
                         }
 
                         // Input ended, no remaining bytes, just continue as normal
-                        Err(e) if e.is_incomplete() && !(&data[pos..]).is_empty() => {
+                        Err(e) if e.is_incomplete() && !data.is_empty() => {
                             info!("Need to read more, irc2::parse: {:?}", e);
                             let l = data.len();
                             dbg!(l, pos);
@@ -163,7 +163,7 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                             break;
                         }
 
-                        Err(e) if ! (&data[pos..]).is_empty() => {
+                        Err(e) if ! data.is_empty() => {
                             error!("Error from parser: {:?}", e);
                             rem = pos;
                             break;
