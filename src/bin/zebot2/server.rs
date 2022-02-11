@@ -48,7 +48,7 @@ async fn connect_tls(settings: &Settings) -> Result<tokio_rustls::client::TlsStr
     Ok(connector.connect(domain, sock).await?)
 }
 
-async fn sock_send<T: AsyncWriteExt + Unpin>(sock: &mut T, data: String) ->  Result<(), Box<dyn Error + Send + Sync>> {
+async fn sock_send<T: AsyncWriteExt + Unpin>(sock: &mut T, data: &str) ->  Result<(), Box<dyn Error + Send + Sync>> {
     for part in data.split("\r\n").filter(|p| !p.is_empty()) {
         debug!("send: {}", part);
     }
@@ -74,13 +74,13 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                     ServerCommand::Quit => {
                         info!("Got quit message ...");
                         send.send(ClientCommand::ServerQuit("Received QUIT".to_string())).await?;
-                        sock_send(&mut sock, "QUIT :Need to restart the distributed real-time Java cluster VM\r\n".to_string()).await?;
+                        sock_send(&mut sock, "QUIT :Need to restart the distributed real-time Java cluster VM\r\n").await?;
                         sock.flush().await?;
                         break;
                     }
 
                     ServerCommand::Message(dst, msg) => {
-                        sock_send(&mut sock, format!("PRIVMSG {} :{}\r\n", dst, msg)).await?;
+                        sock_send(&mut sock, &format!("PRIVMSG {} :{}\r\n", dst, msg)).await?;
                     }
 
                     ServerCommand::Logon {nick, realname} => {
@@ -88,15 +88,15 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                             "USER {} none none :{}\r\nNICK :{}\r\n",
                             &nick, &realname, &nick,
                         );
-                        sock_send(&mut sock, msg).await?;
+                        sock_send(&mut sock, &msg).await?;
                     }
 
                     ServerCommand::Join(chan) => {
-                        sock_send(&mut sock, format!("JOIN :{}\r\n", chan)).await?;
+                        sock_send(&mut sock, &format!("JOIN :{}\r\n", chan)).await?;
                     }
 
                     ServerCommand::Leave(chan) => {
-                        sock_send(&mut sock, format!("PART :{}\r\n", chan)).await?;
+                        sock_send(&mut sock, &format!("PART :{}\r\n", chan)).await?;
                     }
                 }
             }
@@ -138,7 +138,7 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
 
                                     let resp = format!("PONG {} :{}\r\n", dst, dst);
 
-                                    sock_send(&mut sock, resp).await?;
+                                    sock_send(&mut sock, &resp).await?;
                                 }
                                 Quit => {
 

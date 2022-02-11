@@ -1,8 +1,13 @@
 use std::error::Error;
+use std::io::BufReader;
+use std::sync::Arc;
 use std::time::Instant;
+use nom::AsBytes;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
-use tracing::{info, warn};
+use tokio::process::Command;
+use tokio::sync::Mutex;
+use tracing::{error, info, warn};
 
 use crate::Settings;
 use crate::server::{ServerCommand};
@@ -26,36 +31,124 @@ impl<'a> Client<'a> {
         Ok(())
     }
 
+    async fn handle_command_uptime(&self, dst: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut u = self.startup.elapsed().as_secs();
+        let mut r = String::new();
+
+        if u >= 3600 * 24 * 365 {
+            let y = u / (3600 * 24 * 365);
+            r += &format!("{}y ", y);
+            u -= y * 3600 * 24 * 365;
+        }
+
+        if u >= 3600 * 24 {
+            let d = u / (3600 * 24);
+            r += &format!("{}d ", d);
+            u -= d * 3600 * 24;
+        }
+
+        let h = u / 3600;
+        u -= h * 3600;
+
+        let m = u / 60;
+        u -= m * 60;
+
+        r += &format!("{:02}:{:02}:{:02} uptime", h, m, u);
+
+        self.message(dst, &r).await?;
+
+        Ok(())
+    }
+
     async fn handle_zebot_command(&self, dst: &str, cmd: &str, args: &[&str]) -> Result<(), Box<dyn Error + Send + Sync>> {
         match cmd {
-            "!up" | "!uptime" => {
-                let mut u = self.startup.elapsed().as_secs();
-                let mut r = String::new();
+            "!up" | "!uptime" => self.handle_command_uptime(dst).await?,
+            _ => warn!("Unknown command \"{}\"", cmd),
+        }
+        Ok(())
+    }
 
-                if u >= 3600 * 24 * 365 {
-                    let y = u / (3600 * 24 * 365);
-                    r += &format!("{}y ", y);
-                    u -= y * 3600 * 24 * 365;
+    async fn youtube_title(&self, dst: &str, text: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let yt_re = regex::Regex::new(r"https?://((www.)?youtube\.com/watch|youtu.be/)").unwrap();
+        for url in text
+            .split_ascii_whitespace()
+            .filter(|&x| x.starts_with("https://") || x.starts_with("http://")) {
+            if yt_re.is_match(url) {
+                if let Ok(output) = Command::new("python3")
+                    .current_dir("youtube-dl")
+                    .args(&[
+                        "-m", "youtube_dl", "--quiet", "--get-title", "--socket-timeout", "5", url,
+                    ])
+                    .output().await {
+                    let err = String::from_utf8_lossy(output.stderr.as_ref());
+                    if !err.is_empty() {
+                        error!("Got error from youtube-dl: {}", err);
+                        self.message(dst, &format!("Got an error for URL {}, is this a valid video URL?", &url)).await?;
+                    } else {
+                        let title = String::from_utf8_lossy(output.stdout.as_ref());
+                        if !title.is_empty() {
+                            self.message(dst, &format!("{} has title '{}'", &url, title.trim())).await?;
+                        }
+                    }
                 }
+            } else {
+                // xpath: "//html/body/*[local-name() = \"h1\"]/text()"
 
-                if u >= 3600 * 24 {
-                    let d = u / (3600 * 24);
-                    r += &format!("{}d ", d);
-                    u -= d * 3600 * 24;
-                }
+                // let r = reqwest::get(url).await?;
+                // let b = r.text().await?;
 
-                let h = u / 3600;
-                u -= h * 3600;
+                // let mut in_h1 = false;
+                // for token in html5gum::Tokenizer::new(&b).infallible() {
+                //     match token {
+                //         html5gum::Token::StartTag(tag) if tag.name.as_slice().to_ascii_lowercase() == b"h1" => {
+                //             in_h1 = true;
+                //         }
+                //         html5gum::Token::String(s) if in_h1 => {
+                //             dbg!(String::from_utf8_lossy(s.as_slice()));
+                //         }
+                //         html5gum::Token::EndTag(tag) if tag.name.as_slice().to_ascii_lowercase() == b"h1" => {
+                //             in_h1 = false;
+                //             break;
+                //         }
+                //         _ => (),
+                //     }
+                // }
 
-                let m = u / 60;
-                u -= m * 60;
+                // // xml parser; doesn't pars e.g. https://heise.de/
+                // let mut er = xml::EventReader::new(BufReader::new(b.as_bytes()));
+                // let mut in_h1 = false;
+                // for e in er {
+                //     dbg!(&e);
+                //     match &e {
+                //         Ok(xml::reader::XmlEvent::StartElement { name, .. }) if name.to_string() == "h1" => {
+                //             in_h1 = true;
+                //         }
+                //         Ok(xml::reader::XmlEvent::Characters(s)) if in_h1 => {
+                //             info!("Got string from h1: '{}'", s);
+                //         }
+                //         Ok(xml::reader::XmlEvent::EndElement { name, .. }) if name.to_string() == "h1" => {
+                //             in_h1 = false;
+                //             break;
+                //         }
+                //         _ => (),
+                //     }
+                // }
 
-                r += &format!("{:02}:{:02}:{:02}", h, m, u);
 
-                self.message(dst, &format!("{} uptime", r)).await?;
+            //    // I can't figure out how to not make this one crash with tokio...
+            //    use select::document::Document;
+            //    use select::predicate::{Class, Name};
+            //    let r = reqwest::get(url).await;
+            //    if let Ok(r) = r {
+            //        if let Ok(s) = r.text().await {
+            //            let d = Mutex::new(Document::from(s.as_str()));
+            //            if let Some(h1) = d.lock().await.find(Name("h1")).next() {
+            //                let title = h1.text();
+            //                self.message(dst, &format!("{} has title '{}'", &url, title.trim())).await?;
+            //            }
+            //        }
+            //    }
             }
-
-            _ => (),
         }
         Ok(())
     }
@@ -83,6 +176,8 @@ impl<'a> Client<'a> {
             self.handle_zebot_command(&dst, text.as_str(), &textv[1..]).await?;
             return Ok(());
         }
+
+        self.youtube_title(&dst, text.as_str()).await?;
 
         info!("{}", msg);
 
