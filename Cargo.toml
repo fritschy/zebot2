@@ -8,6 +8,9 @@ authors = [ "Marcus Borkenhagen <m AT fritschy DOT de>" ]
 irc2 = { git = "https://github.com/fritschy/zebot.git", package = "irc2" }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "3.0.14", features = ["derive"] }
+nom = "7.1.0"
+tracing = "0.1.30"
+tracing-subscriber = "0.3.8"
 
 tokio-rustls = { version = "0.23.2", optional = true }
 webpki-roots = { version = "0.22.2", optional = true }
