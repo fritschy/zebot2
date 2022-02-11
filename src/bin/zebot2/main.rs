@@ -6,10 +6,11 @@ use std::time::Duration;
 use clap::Parser;
 use irc2;
 use tokio;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::spawn;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_rustls::TlsStream;
 
 use tracing::{info, warn, error, debug};
 
@@ -35,6 +36,10 @@ struct Settings {
     /// Channels to join
     #[clap(short, long)]
     channels: Vec<String>,
+
+    /// Server ping timeout
+    #[clap(short = 't', long, default_value_t = 5*60)]
+    server_timeout: u64,
 }
 
 async fn connect(args: &Settings) -> Result<TcpStream, Box<dyn Error + Send + Sync>> {
@@ -95,7 +100,11 @@ enum ClientCommand {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let mut my_subscriber = tracing_subscriber::FmtSubscriber::new();
+    let mut my_subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .finish();
     tracing::subscriber::set_global_default(my_subscriber)
         .expect("setting tracing default failed");
 
@@ -106,14 +115,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let srv = spawn(server(server_recv, server_send.clone(), args.clone()));
     let cmdl = spawn(cmdline(client_recv, client_send.clone(), args.clone()));
 
-    tokio::select! {
-        status = srv => {
-
-        }
-        status = cmdl => {
-
-        }
-    }
+    tokio::join!(srv, cmdl);
 
     std::process::exit(0);
 
@@ -155,7 +157,6 @@ async fn cmdline(mut recv: Receiver<ClientCommand>, mut send: Sender<ServerComma
                                 send.send(ServerCommand::Join(c.clone())).await?;
                             }
                         }
-                        info!("msg: {}", msg);
                     }
                     ClientCommand::ServerQuit(reason) => {
                         info!("Server quit: {}", reason);
@@ -192,6 +193,13 @@ async fn cmdline(mut recv: Receiver<ClientCommand>, mut send: Sender<ServerComma
     Ok(())
 }
 
+async fn sock_send(sock: &mut tokio_rustls::client::TlsStream<TcpStream>, data: String) ->  Result<(), Box<dyn Error + Send + Sync>> {
+    for part in data.split("\r\n").filter(|p| !p.is_empty()) {
+        debug!("send: {}", part);
+    }
+    Ok(sock.write_all(data.as_bytes()).await?)
+}
+
 async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientCommand>, args: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut sock = connect_tls(&args).await?;
 
@@ -201,8 +209,6 @@ async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientComman
     let mut logon = false;
 
     while retries > 0 {
-        dbg!(rem);
-
         tokio::select! {
             msg = recv.recv() => {
                 if msg.is_none() {
@@ -218,7 +224,7 @@ async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientComman
                     }
 
                     ServerCommand::Message(dst, msg) => {
-                        sock.write_all(format!("PRIVMSG {}: {}\r\n", dst, msg).as_bytes()).await?;
+                        sock_send(&mut sock, format!("PRIVMSG {}: {}\r\n", dst, msg)).await?;
                     }
 
                     ServerCommand::Logon {nick, realname} => {
@@ -226,11 +232,11 @@ async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientComman
                             "USER {} none none :{}\r\nNICK :{}\r\n",
                             &nick, &realname, &nick,
                         );
-                        sock.write_all(msg.as_bytes()).await?;
+                        sock_send(&mut sock, msg).await?;
                     }
 
                     ServerCommand::Join(chan) => {
-                        sock.write_all(format!("JOIN :{}\r\n", chan).as_bytes()).await?;
+                        sock_send(&mut sock, format!("JOIN :{}\r\n", chan)).await?;
                     }
 
                     _ => {
@@ -239,8 +245,15 @@ async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientComman
                 }
             }
 
-            n = sock.read(&mut buf[rem ..]) => {
-                let n = n?;
+            n = tokio::time::timeout(Duration::from_secs(args.server_timeout), sock.read(&mut buf[rem ..])) => {
+                let n = match n {
+                    Err(e) => {
+                        send.send(ClientCommand::ServerQuit("timeout".to_string())).await?;
+                        return Err(Box::new(io::Error::new(io::ErrorKind::Other, "timeout")));
+                    }
+                    Ok(n) => n?,
+                };
+
                 if n == 0 {
                     retries -= 1;
                     continue;
@@ -260,7 +273,17 @@ async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientComman
                             use irc2::command::CommandCode::*;
                             match msg.command {
                                 Ping => {
+                                    let dst = if let Some(prefix) = &msg.prefix {
+                                        prefix.to_string()
+                                    } else if !msg.params.is_empty() {
+                                        msg.params[0].clone()
+                                    } else {
+                                        return Err(Box::new(io::Error::new(io::ErrorKind::Other, "Don't know how to respond to PING w/o params or prefix!")));
+                                    };
 
+                                    let resp = format!("PONG {} :{}\r\n", dst, dst);
+
+                                    sock_send(&mut sock, resp).await?;
                                 }
                                 Quit => {
 
@@ -278,7 +301,8 @@ async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientComman
                         Err(e) if e.is_incomplete() => {
                             info!("Need to read more, irc2::parse: {:?}", e);
                             let l = data.len();
-                            buf.copy_within(pos..l, 0);
+                            dbg!(l, pos);
+                            buf.copy_within(pos..pos+l, 0);
                             rem = 0;
                             break;
                         }
@@ -297,6 +321,8 @@ async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientComman
                 }
             }
         }
+
+        sock.flush().await?;
     }
 
     info!("Server quitting...");
