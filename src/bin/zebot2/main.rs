@@ -6,11 +6,10 @@ use std::time::Duration;
 use clap::Parser;
 use irc2;
 use tokio;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::spawn;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio_rustls::TlsStream;
 
 use tracing::{info, warn, error, debug};
 
@@ -47,16 +46,7 @@ async fn connect(args: &Settings) -> Result<TcpStream, Box<dyn Error + Send + Sy
     Ok(TcpStream::connect(addr).await?)
 }
 
-#[cfg(feature = "native-tls")]
-pub(crate) async fn connect_tls(args: &Settings) -> Result<tokio_native_tls::TlsStream<TcpStream>, Box<dyn Error + Send + Sync>> {
-    let sock = connect(args).await?;
-    let cx = tokio_native_tls::native_tls::TlsConnector::builder().build()?;
-    let cx = tokio_native_tls::TlsConnector::from(cx);
-    Ok(cx.connect(args.server.split(':').next().ok_or("invalid server name")?, sock).await?)
-}
-
-#[cfg(not(feature = "native-tls"))]
-pub(crate) async fn connect_tls(args: &Settings) -> Result<tokio_rustls::client::TlsStream<TcpStream>, Box<dyn Error + Send + Sync>> {
+async fn connect_tls(args: &Settings) -> Result<tokio_rustls::client::TlsStream<TcpStream>, Box<dyn Error + Send + Sync>> {
     let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
     root_store.add_server_trust_anchors(
         webpki_roots::TLS_SERVER_ROOTS
@@ -100,7 +90,7 @@ enum ClientCommand {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let mut my_subscriber = tracing_subscriber::FmtSubscriber::builder()
+    let my_subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_max_level(tracing::Level::DEBUG)
         .with_thread_ids(false)
         .with_thread_names(false)
@@ -115,17 +105,16 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let srv = spawn(server(server_recv, server_send.clone(), args.clone()));
     let cmdl = spawn(cmdline(client_recv, client_send.clone(), args.clone()));
 
-    tokio::join!(srv, cmdl);
+    let result = tokio::join!(srv, cmdl);
+    result.0??;
+    result.1??;
 
     std::process::exit(0);
-
-    Ok(())
 }
 
-async fn cmdline(mut recv: Receiver<ClientCommand>, mut send: Sender<ServerCommand>, args: Settings) ->  Result<(), Box<dyn Error + Send + Sync>> {
+async fn cmdline(mut recv: Receiver<ClientCommand>, send: Sender<ServerCommand>, args: Settings) ->  Result<(), Box<dyn Error + Send + Sync>> {
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
-    let mut stdout = tokio::io::stdout();
-    let mut line = String::with_capacity(256);
+    let mut line = String::with_capacity(1024);
 
     loop {
         tokio::select! {
@@ -162,15 +151,12 @@ async fn cmdline(mut recv: Receiver<ClientCommand>, mut send: Sender<ServerComma
                         info!("Server quit: {}", reason);
                         break;
                     }
-                    _ => {
-
-                    }
                 }
             }
 
             n = stdin.read_line(&mut line) => {
                 match n {
-                    Err(e) => {
+                    Err(_) => {
                         warn!("Error reading from stdin... quitting");
                         send.send(ServerCommand::Quit).await?;
                         return Ok(());
@@ -184,7 +170,7 @@ async fn cmdline(mut recv: Receiver<ClientCommand>, mut send: Sender<ServerComma
                 }
 
                 let stripped = line.strip_suffix('\n').ok_or("stripped")?;
-                dbg!(n, &stripped);
+                send.send(ServerCommand::Message(args.channels[0].clone(), stripped.to_string())).await?;
                 line.clear();
             }
         }
@@ -200,13 +186,12 @@ async fn sock_send(sock: &mut tokio_rustls::client::TlsStream<TcpStream>, data: 
     Ok(sock.write_all(data.as_bytes()).await?)
 }
 
-async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientCommand>, args: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn server(mut recv: Receiver<ServerCommand>, send: Sender<ClientCommand>, args: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut sock = connect_tls(&args).await?;
 
     let mut buf = vec![0u8; 1 << 16];
     let mut rem = 0;
     let mut retries = 5;
-    let mut logon = false;
 
     while retries > 0 {
         tokio::select! {
@@ -224,7 +209,7 @@ async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientComman
                     }
 
                     ServerCommand::Message(dst, msg) => {
-                        sock_send(&mut sock, format!("PRIVMSG {}: {}\r\n", dst, msg)).await?;
+                        sock_send(&mut sock, format!("PRIVMSG {} :{}\r\n", dst, msg)).await?;
                     }
 
                     ServerCommand::Logon {nick, realname} => {
@@ -247,7 +232,7 @@ async fn server(mut recv: Receiver<ServerCommand>, mut send: Sender<ClientComman
 
             n = tokio::time::timeout(Duration::from_secs(args.server_timeout), sock.read(&mut buf[rem ..])) => {
                 let n = match n {
-                    Err(e) => {
+                    Err(_) => {
                         send.send(ClientCommand::ServerQuit("timeout".to_string())).await?;
                         return Err(Box::new(io::Error::new(io::ErrorKind::Other, "timeout")));
                     }
