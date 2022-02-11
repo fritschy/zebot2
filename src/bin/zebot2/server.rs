@@ -18,12 +18,12 @@ pub(crate) enum ServerCommand {
     Logon { nick: String, realname: String },
 }
 
-async fn connect(args: &Settings) -> Result<TcpStream, Box<dyn Error + Send + Sync>> {
-    let addr = args.server.to_socket_addrs().expect("server address").next().ok_or("Could not create server address")?;
+async fn connect(settings: &Settings) -> Result<TcpStream, Box<dyn Error + Send + Sync>> {
+    let addr = settings.server.to_socket_addrs().expect("server address").next().ok_or("Could not create server address")?;
     Ok(TcpStream::connect(addr).await?)
 }
 
-async fn connect_tls(args: &Settings) -> Result<tokio_rustls::client::TlsStream<TcpStream>, Box<dyn Error + Send + Sync>> {
+async fn connect_tls(settings: &Settings) -> Result<tokio_rustls::client::TlsStream<TcpStream>, Box<dyn Error + Send + Sync>> {
     let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
     root_store.add_server_trust_anchors(
         webpki_roots::TLS_SERVER_ROOTS
@@ -42,8 +42,8 @@ async fn connect_tls(args: &Settings) -> Result<tokio_rustls::client::TlsStream<
         .with_root_certificates(root_store)
         .with_no_client_auth();
     let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
-    let sock = connect(args).await?;
-    let domain = tokio_rustls::rustls::ServerName::try_from(args.server.split(':').next().ok_or("invalid server name")?)
+    let sock = connect(settings).await?;
+    let domain = tokio_rustls::rustls::ServerName::try_from(settings.server.split(':').next().ok_or("invalid server name")?)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid dnsname"))?;
     Ok(connector.connect(domain, sock).await?)
 }
@@ -55,8 +55,8 @@ async fn sock_send<T: AsyncWriteExt + Unpin>(sock: &mut T, data: String) ->  Res
     Ok(sock.write_all(data.as_bytes()).await?)
 }
 
-pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<ClientCommand>, args: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let mut sock = connect_tls(&args).await?;
+pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<ClientCommand>, settings: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut sock = connect_tls(&settings).await?;
 
     let mut buf = vec![0u8; 1 << 16];
     let mut rem = 0;
@@ -101,7 +101,7 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                 }
             }
 
-            n = tokio::time::timeout(Duration::from_secs(args.server_timeout), sock.read(&mut buf[rem ..])) => {
+            n = tokio::time::timeout(Duration::from_secs(settings.server_timeout), sock.read(&mut buf[rem ..])) => {
                 let n = match n {
                     Err(_) => {
                         send.send(ClientCommand::ServerQuit("timeout".to_string())).await?;
@@ -118,12 +118,11 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                 retries = 5;
 
                 let mut data = &buf[..rem + n];
-                let mut pos = 0;
+                let pos = 0;
 
-                while !data.is_empty() {
+                while !data.is_empty() && data != b"\r\n" {
                     match irc2::parse(data) {
                         Ok((r, msg)) => {
-                            use nom::Offset;
                             data = r;
 
                             use irc2::command::CommandCode::*;
@@ -155,8 +154,10 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
 
                         // Input ended, no remaining bytes, just continue as normal
                         Err(e) if e.is_incomplete() && !data.is_empty() => {
+                            use nom::Offset;
                             info!("Need to read more, irc2::parse: {:?}", e);
                             let l = data.len();
+                            let pos = buf.as_slice().offset(data);
                             dbg!(l, pos);
                             buf.copy_within(pos..pos+l, 0);
                             rem = 0;
