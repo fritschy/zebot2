@@ -13,19 +13,23 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use rand::prelude::*;
 use std::io::BufRead;
+use std::path::Path;
 use std::thread::sleep;
 use chrono::{Local};
+use irc2::Message;
+use textwrap::word_splitters::NoHyphenation;
 use tokio::spawn;
 use url::Url;
 
 use crate::Settings;
 use crate::client::{ClientCommand};
+use crate::util::{is_json_flag_set, text_box};
 
 #[derive(Debug)]
 pub(crate) enum ControlCommand {
     Irc(irc2::Message),
     ServerQuit(String),
-    TaskDone(Option<(String, String)>),
+    TaskMessage((String, String)),
 }
 
 #[derive(Debug)]
@@ -108,7 +112,7 @@ impl MessageHandler for SubstituteLastHandler {
         let (pat, subst, flags) = if let Some(x) = parse_substitution(re) {
             x
         } else {
-            ctx.message(&dst, "Could not parse substitution");
+            send.send(ControlCommand::TaskDone(Some((&dst, "Could not parse substitution");
             return Ok(HandlerResult::Handled);
         };
 
@@ -141,13 +145,13 @@ impl MessageHandler for SubstituteLastHandler {
                             new_msg.to_string()
                         };
 
-                        ctx.message(&dst, &new_msg);
+                        send.send(ControlCommand::TaskDone(Some((&dst, &new_msg);
                     }
                 }
             }
 
             Err(_) => {
-                ctx.message(&dst, "Could not parse regex");
+                send.send(ControlCommand::TaskDone(Some((&dst, "Could not parse regex");
                 return Ok(HandlerResult::Handled);
             }
         }
@@ -196,7 +200,7 @@ impl MessageHandler for ZeBotAnswerHandler {
             };
 
             let dst = msg.get_reponse_destination(&block_on(async {ctx.joined_channels.read().await}));
-            ctx.message(&dst, &m);
+            send.send(ControlCommand::TaskDone(Some((&dst, &m);
         }
 
         // Pretend we're not interested
@@ -205,56 +209,155 @@ impl MessageHandler for ZeBotAnswerHandler {
 }
 
 impl MessageHandler for Callouthandler {
+}
+
+impl MessageHandler for GreetHandler {
     fn handle(
         &self,
         ctx: &Context,
         msg: &Message,
-    ) -> Result<HandlerResult, std::io::Error> {
-        if msg.params.len() < 2 || !msg.params[1].starts_with('!') {
+    ) -> Result<HandlerResult, io::Error> {
+        if *ctx.nick() != msg.get_nick() {
+            if let CommandCode::Join = msg.command {
+                send.send(ControlCommand::TaskDone(Some((&msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await })),
+                            &greet(&msg.get_nick()),
+                );
+            }
+        }
+
+        Ok(HandlerResult::NotInterested)
+    }
+}
+
+impl MessageHandler for MiscCommandsHandler {
+fn handle(
+    &self,
+    ctx: &Context,
+    msg: &Message,
+) -> Result<HandlerResult, io::Error> {
+        if msg.params.len() < 2 {
             return Ok(HandlerResult::NotInterested);
         }
 
-        let command = msg.params[1][1..]
+        match msg.params[1]
             .split_ascii_whitespace()
             .next()
-            .unwrap_or_default();
-        if !command
-            .chars()
-            .all(|x| x.is_ascii_alphanumeric() || x == '-' || x == '_')
+            .unwrap_or_else(|| msg.params[1].as_ref())
         {
-            return Ok(HandlerResult::NotInterested);
+            "!version" | "!ver" => {
+                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+                send.send(ControlCommand::TaskDone(Some((&dst, &format!("I am version {}, let's not talk about it!", zebot_version()));
+            }
+            "!uptime" | "!up" => {
+                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+
+                let mut r = String::new();
+                let mut u = ctx.start_time.elapsed().as_secs();
+
+                if u >= 3600 * 24 * 365 {
+                    let y = u / (3600 * 24 * 365);
+                    r += &format!("{}y ", y);
+                    u -= y * 3600 * 24 * 365;
+                }
+
+                if u >= 3600 * 24 {
+                    let d = u / (3600 * 24);
+                    r += &format!("{}d ", d);
+                    u -= d * 3600 * 24;
+                }
+
+                let h = u / 3600;
+                u -= h * 3600;
+
+                let m = u / 60;
+                u -= m * 60;
+
+                r += &format!("{:02}:{:02}:{:02}", h, m, u);
+
+                send.send(ControlCommand::TaskDone(Some((&dst, &format!("{} uptime", r));
+            }
+            "!help" | "!commands" => {
+                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+                send.send(ControlCommand::TaskDone(Some((&dst, "I am ZeBot, I can say Hello and answer to !fortune, !bash, !echo and !errno <int>");
+            }
+            "!echo" => {
+                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+                let m = &msg.params[1];
+                if m.len() > 6 {
+                    let m = &m[6..];
+                    if !m.is_empty() {
+                        send.send(ControlCommand::TaskDone(Some((&dst, m);
+                    }
+                }
+            }
+            "!exec" | "!sh" | "!shell" | "!powershell" | "!power-shell" => {
+                let m = format!("Na aber wer wird denn gleich, {}", msg.get_nick());
+                send.send(ControlCommand::TaskDone(Some((
+                    msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }))
+                        .as_str(),
+                    &m,
+                );
+            }
+            _ => return Ok(HandlerResult::NotInterested),
         }
 
-        let command = command.to_lowercase();
+        Ok(HandlerResult::Handled)
+    }
+}
+*/
 
-        let path = format!("./handlers/{}", command);
-        let path = Path::new(&path);
+pub enum HandlerResult {
+    Handled,
+    NotInterested,
+    Error(String),
+}
 
-        if !path.exists() {
-            return Ok(HandlerResult::NotInterested);
-        }
+async fn callout(msg: irc2::Message, settings: Settings, send: Sender<ControlCommand>) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
+    if msg.params.len() < 2 || !msg.params[1].starts_with('!') {
+        return Ok(HandlerResult::NotInterested);
+    }
 
-        let nick = msg.get_nick();
-        let mut args = msg.params.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        args.insert(0, nick); // this sucks
+    let command = msg.params[1][1..]
+        .split_ascii_whitespace()
+        .next()
+        .unwrap_or_default();
+    if !command
+        .chars()
+        .all(|x| x.is_ascii_alphanumeric() || x == '-' || x == '_')
+    {
+        return Ok(HandlerResult::NotInterested);
+    }
 
-        // Handler args look like this:
-        // $srcnick $src(chan,query) "!command[ ...args]"
+    let command = command.to_lowercase();
 
-        // json from handler
-        // { "lines": [ ... ],
-        //   "dst": "nick" | "channel",   # optional
-        //   "box": "0"|"1"|true|false,   # optional
-        //   "wrap": "0"|"1"              # optional
-        //   "wrap_single_lines": "0"|"1" # optional
-        //   "title": "string"            # optional
-        //   "link": "string"             # optional
-        // }
+    let path = format!("./handlers/{}", command);
 
-        dbg!(&args);
+    if !Path::new(&path).exists() {
+        return Ok(HandlerResult::NotInterested);
+    }
 
+    let nick = msg.get_nick();
+    let mut args = msg.params.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    args.insert(0, nick); // this sucks
+
+    // Handler args look like this:
+    // $srcnick $src(chan,query) "!command[ ...args]"
+
+    // json from handler
+    // { "lines": [ ... ],
+    //   "dst": "nick" | "channel",   # optional
+    //   "box": "0"|"1"|true|false,   # optional
+    //   "wrap": "0"|"1"              # optional
+    //   "wrap_single_lines": "0"|"1" # optional
+    //   "title": "string"            # optional
+    //   "link": "string"             # optional
+    // }
+
+    dbg!(&args);
+
+    spawn(async move {
         let s = Instant::now();
-        let cmd = Command::new("/usr/bin/timeout").arg("5s").arg(path).args(&args).output();
+        let cmd = Command::new("/usr/bin/timeout").arg("30s").arg(path).args(&args).output().await;
         let s = s.elapsed();
 
         info!("Handler {} completed in {:?}", command, s);
@@ -262,11 +365,11 @@ impl MessageHandler for Callouthandler {
         match cmd {
             Ok(p) => {
                 if !p.status.success() {
-                    let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
-                    log_error!("Handler failed with code {}", p.status.code().unwrap());
+                    let dst = msg.get_reponse_destination(&settings.channels);
+                    error!("Handler failed with code {}", p.status.code().unwrap());
                     dbg!(&p);
-                    ctx.message(&dst, "Somehow, that did not work...");
-                    return Ok(HandlerResult::Handled);
+                    send.send(ControlCommand::TaskMessage((dst, "Somehow, that did not work...".to_string()))).await;
+                    return;
                 }
 
                 if let Ok(response) = String::from_utf8(p.stdout) {
@@ -276,16 +379,16 @@ impl MessageHandler for Callouthandler {
                             let dst = if response.contains("dst") {
                                 response["dst"].to_string()
                             } else {
-                                msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }))
+                                msg.get_reponse_destination(&settings.channels)
                             };
 
                             if response.contains("error") {
                                 dbg!(&response);
-                                ctx.message(&dst, "Somehow, that did not work...");
-                                return Ok(HandlerResult::Handled);
+                                send.send(ControlCommand::TaskMessage((dst, "Somehow, that did not work...".to_string()))).await;
+                                return;
                             } else if !is_json_flag_set(&response["box"]) {
                                 for l in response["lines"].members() {
-                                    ctx.message(&dst, &l.to_string());
+                                    send.send(ControlCommand::TaskMessage((dst.clone(), l.to_string()))).await;
                                 }
                             } else {
                                 let lines = response["lines"]
@@ -340,129 +443,34 @@ impl MessageHandler for Callouthandler {
                                 };
 
                                 for i in text_box(lines.iter(), response["title"].as_str()) {
-                                    ctx.message(&dst, &i);
+                                    send.send(ControlCommand::TaskMessage((dst.clone(), i))).await;
                                 }
                             }
                         }
 
                         Err(e) => {
                             // Perhaps have this as a fallback for non-json handlers? What could possibly go wrong!
-                            log_error!(
+                            error!(
                                 "Could not parse json from handler {}: {}",
                                 command, response
                             );
-                            log_error!("Error: {:?}", e);
+                            error!("Error: {:?}", e);
                         }
                     }
                 } else {
-                    log_error!("Could not from_utf8 for handler {}", command);
+                    error!("Could not from_utf8 for handler {}", command);
                 }
             }
 
             Err(e) => {
-                log_error!("Could not execute handler: {:?}", e);
-                return Ok(HandlerResult::NotInterested);
+                error!("Could not execute handler: {:?}", e);
+                return;
             }
         }
+    });
 
-        Ok(HandlerResult::Handled)
-    }
+    Ok(HandlerResult::Handled)
 }
-
-impl MessageHandler for GreetHandler {
-    fn handle(
-        &self,
-        ctx: &Context,
-        msg: &Message,
-    ) -> Result<HandlerResult, io::Error> {
-        if *ctx.nick() != msg.get_nick() {
-            if let CommandCode::Join = msg.command {
-                ctx.message(&msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await })),
-                            &greet(&msg.get_nick()),
-                );
-            }
-        }
-
-        Ok(HandlerResult::NotInterested)
-    }
-}
-
-impl MessageHandler for MiscCommandsHandler {
-fn handle(
-    &self,
-    ctx: &Context,
-    msg: &Message,
-) -> Result<HandlerResult, io::Error> {
-        if msg.params.len() < 2 {
-            return Ok(HandlerResult::NotInterested);
-        }
-
-        match msg.params[1]
-            .split_ascii_whitespace()
-            .next()
-            .unwrap_or_else(|| msg.params[1].as_ref())
-        {
-            "!version" | "!ver" => {
-                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
-                ctx.message(&dst, &format!("I am version {}, let's not talk about it!", zebot_version()));
-            }
-            "!uptime" | "!up" => {
-                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
-
-                let mut r = String::new();
-                let mut u = ctx.start_time.elapsed().as_secs();
-
-                if u >= 3600 * 24 * 365 {
-                    let y = u / (3600 * 24 * 365);
-                    r += &format!("{}y ", y);
-                    u -= y * 3600 * 24 * 365;
-                }
-
-                if u >= 3600 * 24 {
-                    let d = u / (3600 * 24);
-                    r += &format!("{}d ", d);
-                    u -= d * 3600 * 24;
-                }
-
-                let h = u / 3600;
-                u -= h * 3600;
-
-                let m = u / 60;
-                u -= m * 60;
-
-                r += &format!("{:02}:{:02}:{:02}", h, m, u);
-
-                ctx.message(&dst, &format!("{} uptime", r));
-            }
-            "!help" | "!commands" => {
-                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
-                ctx.message(&dst, "I am ZeBot, I can say Hello and answer to !fortune, !bash, !echo and !errno <int>");
-            }
-            "!echo" => {
-                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
-                let m = &msg.params[1];
-                if m.len() > 6 {
-                    let m = &m[6..];
-                    if !m.is_empty() {
-                        ctx.message(&dst, m);
-                    }
-                }
-            }
-            "!exec" | "!sh" | "!shell" | "!powershell" | "!power-shell" => {
-                let m = format!("Na aber wer wird denn gleich, {}", msg.get_nick());
-                ctx.message(
-                    msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }))
-                        .as_str(),
-                    &m,
-                );
-            }
-            _ => return Ok(HandlerResult::NotInterested),
-        }
-
-        Ok(HandlerResult::Handled)
-    }
-}
-*/
 
 fn greet(nick: &str) -> String {
     const PATS: &[&str] = &[
@@ -521,11 +529,11 @@ async fn youtube_title(dst: String, text: String, send: Sender<ControlCommand>) 
                 let err = String::from_utf8_lossy(output.stderr.as_ref());
                 if !err.is_empty() {
                     error!("Got error from youtube-dl: {}", err);
-                    send.send(ControlCommand::TaskDone(Some((dst.to_string(), format!("Got an error for URL {}, is this a valid video URL?", &url))))).await?;
+                    send.send(ControlCommand::TaskMessage((dst.to_string(), format!("Got an error for URL {}, is this a valid video URL?", &url)))).await?;
                 } else {
                     let title = String::from_utf8_lossy(output.stdout.as_ref());
                     if !title.is_empty() {
-                        send.send(ControlCommand::TaskDone(Some((dst.to_string(), format!("{} has title '{}'", &url, title.trim()))))).await?;
+                        send.send(ControlCommand::TaskMessage((dst.to_string(), format!("{} has title '{}'", &url, title.trim())))).await?;
                     }
                 }
             }
@@ -627,10 +635,12 @@ impl<'a> Client<'a> {
         Ok(())
     }
 
-    async fn handle_zebot_command(&self, dst: &str, cmd: &str, args: &[&str]) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_zebot_command(&self, msg: &Message, dst: &str, cmd: &str, args: &[&str], send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
         match cmd {
             "!up" | "!uptime" => self.handle_command_uptime(dst).await?,
-            _ => warn!("Unknown command \"{}\"", cmd),
+            _ => {
+                callout(msg.clone(), self.settings.clone(), send.clone()).await?;
+            },
         }
         Ok(())
     }
@@ -653,15 +663,15 @@ impl<'a> Client<'a> {
 
         let text = &args[1];
 
-        if text.starts_with('!') && text.len() > 1 && text.as_bytes()[1].is_ascii_alphanumeric() {
-            let textv = text.split_ascii_whitespace().collect::<Vec<_>>();
-            self.handle_zebot_command(&dst, text.as_str(), &textv[1..]).await?;
-            return Ok(());
-        }
-
         url_saver(&msg, &self.settings).await?;
 
         spawn(youtube_title(dst.clone(), text.clone(), send.clone()));
+
+        if text.starts_with('!') && text.len() > 1 && text.as_bytes()[1].is_ascii_alphanumeric() {
+            let textv = text.split_ascii_whitespace().collect::<Vec<_>>();
+            self.handle_zebot_command(msg, &dst, text.as_str(), &textv[1..], send.clone()).await?;
+            return Ok(());
+        }
 
         info!("{}", msg);
 
@@ -735,12 +745,10 @@ pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<Client
                             break;
                         }
 
-                        ControlCommand::TaskDone(Some((dst, msg))) => {
+                        ControlCommand::TaskMessage((dst, msg)) => {
                             info!("TaskDone({dst}, {msg})");
                             send.send(ClientCommand::Message(dst.clone(), msg.clone())).await?;
                         }
-
-                        ControlCommand::TaskDone(_) => (),
                     }
                 }
             }
