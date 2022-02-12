@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+
+from bs4 import BeautifulSoup
+from urllib.request import urlopen
+from random import randint
+
+from handler_lib import *
+
+lines = []
+qid = ""
+
+index = randint(0, 1)
+args = get_split_args()
+if len(args) >= 1:
+    if args[0].lower() == "en":
+        index = 1
+    if args[0].lower() == "de":
+        index = 0
+
+def german(url):
+    with urlopen(url, timeout=10) as r:
+        bs = BeautifulSoup(r.read(), features="lxml")
+    qb = bs.find(attrs={"class": "quotebox"})
+    qid = "de/{}".format(next((x.attrs['name'] for x in qb.children if x.name)))
+    quote = bs.find('div', {'class': 'zitat'})
+    lines = list(filter(lambda x: x!='', map(str.strip, quote.strings)))
+    return (qid, lines)
+
+def engrish(url):
+    with urlopen(url, timeout=10) as r:
+        bs = BeautifulSoup(r.read(), features="lxml")
+    q = bs.find(attrs={"class": "quote"})
+    qid = "en/{}".format(list(q.children)[0].attrs['href'].strip('?'))
+    q = bs.find(attrs={"class": "qt"})
+    lines = q.text.splitlines()
+    return (qid, lines)
+
+bashes = [(german, "http://german-bash.org/action/random"), (engrish, "http://bash.org/?random1")]
+what, url = bashes[index]
+
+try:
+    qid, lines = what(url)
+except:
+    try:
+        what, url = bashes[(index+1) % len(bashes)]
+        qid, lines = what(url)
+        qid = "{} (first try failed)".format(qid)
+    except:
+        with urlopen(url) as r:
+            bs = BeautifulSoup(r.read(), features="lxml")
+            lines = bs.text.splitlines()
+            if len(lines) == 1: # uhm, special case ...
+                handler_exit(0, lines=["Not today: {}".format(lines[0])], box=0)
+        log({"exc_info": sys.exc_info()})
+        handler_exit(0, lines=["Uhm, did not recognize the HTML ..."], box=0)
+
+handler_exit(0, lines=lines, box=1, title=qid, wrap_single_lines=1)

@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+
+from handler_lib import get_args, handler_exit
+
+args = get_args()
+
+if len(args) < 1:
+    handler_exit(1, error="Not enough arguments")
+
+from urllib.request import urlopen, quote as urlquote
+
+#args = "".join(filter(lambda x: x.isalpha(), args))
+
+url = "https://www.duden.de/suchen/dudenonline/{}".format(urlquote(args))
+with urlopen(url) as r:
+    d = r.read()
+
+from bs4 import BeautifulSoup as BS
+
+bs = BS(d, features="lxml")
+title = bs.find("a", attrs={"class": "vignette__label"})
+link = title.attrs["href"]
+title = title.text.strip()
+t = bs.find("p", attrs={"class": "vignette__snippet"}).text.strip()
+
+dash = " – "
+dots = " … "
+
+if t.find(dash) > 0:
+    kind, t = t.split(dash)
+    lines = [kind]
+else:
+    lines = []
+
+# yeah, these splits spell trouble!
+if t.find(dots) > 0:
+    lines += t.split(dots)
+    lines = list(map(lambda x: x + dots[:2] if x.find(dots[1]) == -1 else x, lines))
+else:
+    lines.append(t)
+
+#if any(map(lambda x: x.find("; ") > 0, lines)):
+#    new_lines = []
+#    for l in lines:
+#        nl = l.split("; ")
+#        new_lines += nl
+#    lines = new_lines
+
+lines = list(filter(lambda x: len(x) > 3, lines))
+
+handler_exit(0, lines=lines, link="https://www.duden.de" + link, box=1, title=title, wrap_single_lines=1)

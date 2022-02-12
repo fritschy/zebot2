@@ -1,0 +1,5 @@
+#!/bin/sh
+
+echo '{"lines": ['
+cd handlers/ && ls -Q | grep -Fv -e '.' -e '__pycache__' | tr '\n' ',' | sed -e 's/,$//'
+echo '], "box": 1, "title": "available commands"}'

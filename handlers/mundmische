@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+
+from handler_lib import get_args, handler_exit
+
+args = get_args()
+
+if len(args) < 1:
+    handler_exit(1, error="Not enough arguments")
+
+from mechanize import Browser
+
+br = Browser()
+br.open("https://www.mundmische.de/", timeout=5)
+br.select_form(action="/suche")
+br["search_query"] = args
+response = br.submit()
+
+from bs4 import BeautifulSoup as BS
+
+bs = BS(response.get_data(), features="lxml")
+xs = bs.find("div", attrs={"class": "list_panel"})
+src = xs.find("a")
+definition = xs.find("p", attrs={"class": "definition"})
+wort = src.text.strip()
+src = src.attrs["href"]
+
+lines = list(filter(lambda x: len(x) > 0, definition.text.strip().split("\n")))
+
+handler_exit(0, lines=lines, link="https://www.mundmische.de" + src, box=1, title="synonym, {}".format(wort), split_single_lines=1)

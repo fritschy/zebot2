@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+d=$1
+shift 2
+set -- $1
+shift
+f=1
+echo '{"lines": ['
+i=$(factor "$1")
+n="${i%%:*}"
+if echo "$i" | cut -d' ' -f2- | grep -qF ' '
+then
+	echo "\"$d, no\""
+else
+	echo "\"$d, $n is prime\""
+fi
+echo '], "box": 0}'

@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+
+from urllib.request import urlopen, quote as urlquote
+import json
+import sys
+
+from handler_lib import handler_exit, log, get_args
+
+
+def get_search(t):
+    with urlopen("https://api.duckduckgo.com/?q={}&format=json".format(urlquote(t))) as r:
+        try:
+            data = r.read().decode()
+            return json.loads(data)
+        except:
+            log({"exc_info": str(sys.exc_info()), "json": data})
+
+
+term = get_args().lower()
+response = get_search(term)
+
+if response:
+    abstract = response.get("AbstractText")
+    if abstract:
+        abstract = [abstract]
+        abstract_url = response.get("AbstractURL")
+        if abstract_url:
+            handler_exit(0, lines=abstract, link=abstract_url, wrap=1, box=1, title="abstract")
+        handler_exit(0, lines=abstract, wrap=1, box=1, title="abstract")
+
+    # no abstract, check related topics
+    topics = response.get("RelatedTopics", [])
+    if len(topics) != 0:
+        handler_exit(0, wrap=1, title="related", lines=[topics[0]['Text']], link=topics[0]['FirstURL'], box=1)
+
+handler_exit(0, lines=["no result from search, try https://duckduckgo.com/?q={}".format(urlquote(term))], argv=sys.argv)

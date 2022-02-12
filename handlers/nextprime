@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -e
+
+d=$1
+shift 2
+set -- $1
+shift
+f=1
+echo '{"lines": ['
+
+n="$1"
+
+while :
+do
+	p=$(factor "$n")
+	echo "$p" | cut -d' ' -f2- | grep -qF ' ' || break
+	if [ "$(echo "$n % 2" | bc)" = 1 ]
+	then
+		inc=2
+	else
+		inc=1
+	fi
+
+	n="$(echo "$n + $inc" | bc)"
+done
+echo "\"$n\""
+
+echo '], "box": 0}'

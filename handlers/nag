@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+
+import random
+import sys
+
+from handler_lib import handler_exit, get_split_args
+
+dst = get_split_args()
+
+if len(dst) < 1:
+    handler_exit(1, error="not enough arguments to handler, need nick!")
+
+try:
+    with open("nag-{}.txt".format(dst[0]), "rt") as f:
+        lines = list(map(str.strip, f.readlines()))
+        handler_exit(0, lines=["Hey {}, {}".format(dst[0], random.choice(lines))])
+except FileNotFoundError:
+    handler_exit(0, lines=["Hey {}".format(dst[0])])
+except:
+    pass

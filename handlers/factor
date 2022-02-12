@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+shift 2
+set -- $1
+shift
+f=1
+o=$(mktemp)
+trap "rm '$o'" EXIT INT TERM
+for i in "$@"
+do
+	i=$(factor "$@")
+	if [ "$f" != 1 ]
+	then
+		echo "," >> "$o"
+	fi
+	echo "\"$i\"" >> "$o"
+	f=0
+done
+
+if [ "$(wc -l "$o")" != 0 ]
+then
+	echo '{"lines": ['
+	cat "$o"
+	echo '], "box": 1, "title": "prime factors"}'
+fi
