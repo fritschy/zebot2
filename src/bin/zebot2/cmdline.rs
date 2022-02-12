@@ -1,13 +1,20 @@
 use std::error::Error;
+use std::fmt::Display;
+use std::io;
 use std::io::BufReader;
 use std::sync::Arc;
 use std::time::Instant;
+use json::JsonValue;
 use nom::AsBytes;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
+use rand::prelude::*;
+use std::io::BufRead;
+use chrono::Local;
+use url::Url;
 
 use crate::Settings;
 use crate::server::{ServerCommand};
@@ -23,6 +30,566 @@ struct Client<'a> {
     startup: Instant,
     settings: &'a Settings,
     send: Sender<ServerCommand>,
+}
+
+async fn url_saver(msg: &irc2::Message, settings: &Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut filename = String::new();
+    for x in settings.extra_opts.iter() {
+        if let Some(x) = x.strip_prefix("url_store=") {
+            filename = x.to_string();
+            break;
+        }
+    }
+
+    if filename.is_empty() {
+        filename = "urls.txt".to_string();
+    }
+
+    let mut f = tokio::fs::OpenOptions::new()
+        .truncate(false)
+        .create(true)
+        .write(true)
+        .read(false)
+        .append(true)
+        .open(&filename).await?;
+
+    for word in msg.params[1].split_ascii_whitespace() {
+        if let Ok(url) = Url::parse(word) {
+            let nick = msg.get_nick();
+            let chan = msg.get_reponse_destination(&settings.channels);
+            info!("Got an url from {} {}: {}", &chan, &nick, url);
+            let line = format!("{}\t{}\t{}\t{}\n", Local::now().to_rfc3339(), chan, nick, url);
+            f.write_all(line.as_bytes()).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/*
+struct SubstituteLastHandler {
+    last_msg: RefCell<HashMap<(String, String), String>>,
+}
+
+impl SubstituteLastHandler {
+    fn new() -> Self {
+        SubstituteLastHandler {
+            last_msg: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+fn parse_substitution(re: &str) -> Option<(String, String, String)> {
+    let mut s = 0; // state, see below, can only increment
+    let mut sep = '\0';
+    let mut pat = String::with_capacity(re.len());
+    let mut subst = String::with_capacity(re.len());
+    let mut flags = String::with_capacity(re.len());
+    for c in re.chars() {
+        match s {
+            0 => {
+                if c != 's' && c != 'S' {
+                    log_error!("Not a substitution");
+                    return None;
+                }
+                s = 1;
+            }
+
+            1 => {
+                sep = c;
+                s = 2;
+            }
+
+            2 => {
+                if c == sep {
+                    s = 3;
+                } else {
+                    pat.push(c);
+                }
+            }
+
+            3 => {
+                if c == sep {
+                    s = 4;
+                } else {
+                    subst.push(c);
+                }
+            }
+
+            4 => match c {
+                'g' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 's' => {
+                    flags.push(c);
+                }
+                _ => {
+                    log_error!("Invalid flags");
+                    return None;
+                }
+            },
+
+            _ => {
+                log_error!("Invalid state parsing re");
+                dbg!(&re, &c, &s);
+                return None;
+            }
+        }
+    }
+
+    Some((pat, subst, flags))
+}
+
+impl MessageHandler for SubstituteLastHandler {
+    fn handle(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+    ) -> Result<HandlerResult, io::Error> {
+        let nick = msg.get_nick();
+        let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+
+        if !msg.params[1].starts_with("!s") && !msg.params[1].starts_with("!S") {
+            if msg.params[1].starts_with("\x01ACTION") {
+                log_error!("Ignoring ACTION message");
+                return Ok(HandlerResult::NotInterested);
+            }
+            self.last_msg
+                .borrow_mut()
+                .insert((dst, nick), msg.params[1].clone());
+            return Ok(HandlerResult::NotInterested);
+        }
+
+        let re = &msg.params[1][1..];
+        let big_s = msg.params[1].chars().nth(1).unwrap_or('_') == 'S';
+
+        let (pat, subst, flags) = if let Some(x) = parse_substitution(re) {
+            x
+        } else {
+            ctx.message(&dst, "Could not parse substitution");
+            return Ok(HandlerResult::Handled);
+        };
+
+        let (flags, _save_subst) = if flags.contains('s') {
+            (flags.replace("s", ""), true)
+        } else {
+            (flags, false)
+        };
+
+        match regex::Regex::new(&pat) {
+            Ok(re) => {
+                if let Some(last) = self.last_msg.borrow().get(&(dst.clone(), nick.clone())) {
+                    let new_msg = if flags.contains('g') {
+                        re.replace_all(last, subst.as_str())
+                    } else if let Ok(n) = flags.parse::<usize>() {
+                        re.replacen(last, n, subst.as_str())
+                    } else {
+                        re.replace(last, subst.as_str())
+                    };
+
+                    if new_msg != last.as_str() {
+                        // if save_subst {
+                        //     self.last_msg.borrow_mut().insert((dst.clone(), nick.clone()), new_msg.to_string());
+                        //     log_error!("{} new last message '{}'", nick, msg.params[1].to_string());
+                        // }
+
+                        let new_msg = if big_s {
+                            format!("{} meinte: {}", nick, new_msg)
+                        } else {
+                            new_msg.to_string()
+                        };
+
+                        ctx.message(&dst, &new_msg);
+                    }
+                }
+            }
+
+            Err(_) => {
+                ctx.message(&dst, "Could not parse regex");
+                return Ok(HandlerResult::Handled);
+            }
+        }
+
+        Ok(HandlerResult::Handled)
+    }
+}
+
+struct ZeBotAnswerHandler {
+    last: RefCell<HashMap<Prefix, Instant>>,
+}
+
+impl ZeBotAnswerHandler {
+    fn new() -> Self {
+        Self {
+            last: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+impl MessageHandler for ZeBotAnswerHandler {
+    fn handle(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+    ) -> Result<HandlerResult, io::Error> {
+        if msg.params.len() > 1 && msg.params[1..].iter().any(|x| x.contains(ctx.nick())) {
+            let now = Instant::now();
+            let mut last = self.last.borrow_mut();
+            let pfx = msg.prefix.as_ref().unwrap();
+            if last.contains_key(pfx) {
+                let last_ts = *last.get(pfx).unwrap();
+                last.entry(pfx.clone()).and_modify(|x| *x = now);
+                if now.duration_since(last_ts) < Duration::from_secs(2) {
+                    return Ok(HandlerResult::NotInterested);
+                }
+            } else {
+                last.entry(pfx.clone()).or_insert_with(|| now);
+            }
+
+            // It would seem, I need some utility functions to retrieve message semantics
+            let m = if thread_rng().gen_bool(0.93) {
+                nag_user(&msg.get_nick())
+            } else {
+                format!("Hey {}", &msg.get_nick())
+            };
+
+            let dst = msg.get_reponse_destination(&block_on(async {ctx.joined_channels.read().await}));
+            ctx.message(&dst, &m);
+        }
+
+        // Pretend we're not interested
+        Ok(HandlerResult::NotInterested)
+    }
+}
+
+impl MessageHandler for Callouthandler {
+    fn handle(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+    ) -> Result<HandlerResult, std::io::Error> {
+        if msg.params.len() < 2 || !msg.params[1].starts_with('!') {
+            return Ok(HandlerResult::NotInterested);
+        }
+
+        let command = msg.params[1][1..]
+            .split_ascii_whitespace()
+            .next()
+            .unwrap_or_default();
+        if !command
+            .chars()
+            .all(|x| x.is_ascii_alphanumeric() || x == '-' || x == '_')
+        {
+            return Ok(HandlerResult::NotInterested);
+        }
+
+        let command = command.to_lowercase();
+
+        let path = format!("./handlers/{}", command);
+        let path = Path::new(&path);
+
+        if !path.exists() {
+            return Ok(HandlerResult::NotInterested);
+        }
+
+        let nick = msg.get_nick();
+        let mut args = msg.params.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        args.insert(0, nick); // this sucks
+
+        // Handler args look like this:
+        // $srcnick $src(chan,query) "!command[ ...args]"
+
+        // json from handler
+        // { "lines": [ ... ],
+        //   "dst": "nick" | "channel",   # optional
+        //   "box": "0"|"1"|true|false,   # optional
+        //   "wrap": "0"|"1"              # optional
+        //   "wrap_single_lines": "0"|"1" # optional
+        //   "title": "string"            # optional
+        //   "link": "string"             # optional
+        // }
+
+        dbg!(&args);
+
+        let s = Instant::now();
+        let cmd = Command::new("/usr/bin/timeout").arg("5s").arg(path).args(&args).output();
+        let s = s.elapsed();
+
+        info!("Handler {} completed in {:?}", command, s);
+
+        match cmd {
+            Ok(p) => {
+                if !p.status.success() {
+                    let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+                    log_error!("Handler failed with code {}", p.status.code().unwrap());
+                    dbg!(&p);
+                    ctx.message(&dst, "Somehow, that did not work...");
+                    return Ok(HandlerResult::Handled);
+                }
+
+                if let Ok(response) = String::from_utf8(p.stdout) {
+                    dbg!(&response);
+                    match json::parse(&response) {
+                        Ok(response) => {
+                            let dst = if response.contains("dst") {
+                                response["dst"].to_string()
+                            } else {
+                                msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }))
+                            };
+
+                            if response.contains("error") {
+                                dbg!(&response);
+                                ctx.message(&dst, "Somehow, that did not work...");
+                                return Ok(HandlerResult::Handled);
+                            } else if !is_json_flag_set(&response["box"]) {
+                                for l in response["lines"].members() {
+                                    ctx.message(&dst, &l.to_string());
+                                }
+                            } else {
+                                let lines = response["lines"]
+                                    .members()
+                                    .map(|x| x.to_string())
+                                    .collect::<Vec<_>>();
+                                let lines = if is_json_flag_set(&response["wrap"])
+                                    && lines.iter().map(|x| x.len()).any(|l| l > 80)
+                                {
+                                    let nlines = lines.len();
+
+                                    let s = if lines[nlines - 1].starts_with("    ") {
+                                        let (lines, last) = lines.split_at(nlines - 1);
+
+                                        let s = lines.concat();
+                                        let s = textwrap::fill(&s, 80);
+
+                                        let s = s + "\n";
+                                        s + last[0].as_str()
+                                    } else {
+                                        let s = lines.concat();
+                                        textwrap::fill(&s, 80)
+                                    };
+
+                                    s.split(|f| f == '\n')
+                                        .map(|x| x.to_string())
+                                        .collect::<Vec<_>>()
+                                } else if is_json_flag_set(&response["wrap_single_lines"]) {
+                                    let mut new_lines = Vec::with_capacity(lines.len());
+                                    let opt = textwrap::Options::new(80)
+                                        .word_splitter(NoHyphenation)
+                                        .subsequent_indent("  ");
+                                    for l in lines {
+                                        new_lines.extend(
+                                            textwrap::wrap(&l, &opt)
+                                                .iter()
+                                                .map(|x| x.to_string()),
+                                        );
+                                    }
+                                    new_lines
+                                } else {
+                                    lines
+                                };
+
+                                // append link if provided
+                                let lines = if let Some(s) = response["link"].as_str() {
+                                    let mut lines = lines;
+                                    lines.push(format!("    -- {}", s));
+                                    lines
+                                } else {
+                                    lines
+                                };
+
+                                for i in text_box(lines.iter(), response["title"].as_str()) {
+                                    ctx.message(&dst, &i);
+                                }
+                            }
+                        }
+
+                        Err(e) => {
+                            // Perhaps have this as a fallback for non-json handlers? What could possibly go wrong!
+                            log_error!(
+                                "Could not parse json from handler {}: {}",
+                                command, response
+                            );
+                            log_error!("Error: {:?}", e);
+                        }
+                    }
+                } else {
+                    log_error!("Could not from_utf8 for handler {}", command);
+                }
+            }
+
+            Err(e) => {
+                log_error!("Could not execute handler: {:?}", e);
+                return Ok(HandlerResult::NotInterested);
+            }
+        }
+
+        Ok(HandlerResult::Handled)
+    }
+}
+
+fn greet(nick: &str) -> String {
+    const PATS: &[&str] = &[
+        "Hey {}!",
+        "Moin {}, o/",
+        "Moin {}, \\o",
+        "Moin {}, \\o/",
+        "Moin {}, _o/",
+        "Moin {}, \\o_",
+        "Moin {}, o_/",
+        "OI, Ein {}!",
+        "{}, n'Moin!",
+        "{}, grüß Gott, äh - Zeus! Was gibt's denn Neu's?",
+    ];
+
+    if let Some(s) = PATS.iter().choose(&mut thread_rng()) {
+        return s.to_string().replace("{}", nick);
+    }
+
+    String::from("Hey ") + nick
+}
+
+impl MessageHandler for GreetHandler {
+    fn handle(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+    ) -> Result<HandlerResult, io::Error> {
+        if *ctx.nick() != msg.get_nick() {
+            if let CommandCode::Join = msg.command {
+                ctx.message(&msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await })),
+                            &greet(&msg.get_nick()),
+                );
+            }
+        }
+
+        Ok(HandlerResult::NotInterested)
+    }
+}
+
+impl MessageHandler for MiscCommandsHandler {
+fn handle(
+    &self,
+    ctx: &Context,
+    msg: &Message,
+) -> Result<HandlerResult, io::Error> {
+        if msg.params.len() < 2 {
+            return Ok(HandlerResult::NotInterested);
+        }
+
+        match msg.params[1]
+            .split_ascii_whitespace()
+            .next()
+            .unwrap_or_else(|| msg.params[1].as_ref())
+        {
+            "!version" | "!ver" => {
+                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+                ctx.message(&dst, &format!("I am version {}, let's not talk about it!", zebot_version()));
+            }
+            "!uptime" | "!up" => {
+                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+
+                let mut r = String::new();
+                let mut u = ctx.start_time.elapsed().as_secs();
+
+                if u >= 3600 * 24 * 365 {
+                    let y = u / (3600 * 24 * 365);
+                    r += &format!("{}y ", y);
+                    u -= y * 3600 * 24 * 365;
+                }
+
+                if u >= 3600 * 24 {
+                    let d = u / (3600 * 24);
+                    r += &format!("{}d ", d);
+                    u -= d * 3600 * 24;
+                }
+
+                let h = u / 3600;
+                u -= h * 3600;
+
+                let m = u / 60;
+                u -= m * 60;
+
+                r += &format!("{:02}:{:02}:{:02}", h, m, u);
+
+                ctx.message(&dst, &format!("{} uptime", r));
+            }
+            "!help" | "!commands" => {
+                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+                ctx.message(&dst, "I am ZeBot, I can say Hello and answer to !fortune, !bash, !echo and !errno <int>");
+            }
+            "!echo" => {
+                let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
+                let m = &msg.params[1];
+                if m.len() > 6 {
+                    let m = &m[6..];
+                    if !m.is_empty() {
+                        ctx.message(&dst, m);
+                    }
+                }
+            }
+            "!exec" | "!sh" | "!shell" | "!powershell" | "!power-shell" => {
+                let m = format!("Na aber wer wird denn gleich, {}", msg.get_nick());
+                ctx.message(
+                    msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }))
+                        .as_str(),
+                    &m,
+                );
+            }
+            _ => return Ok(HandlerResult::NotInterested),
+        }
+
+        Ok(HandlerResult::Handled)
+    }
+}
+*/
+
+fn nag_user(nick: &str) -> String {
+    fn doit(nick: &str) -> Result<String, io::Error> {
+        let nick = nick.replace(|x: char| !x.is_alphanumeric(), "_");
+        let nag_file = format!("nag-{}.txt", nick);
+        let f = std::fs::File::open(&nag_file).map_err(|e| {
+            error!("Could not open nag-file '{}'", &nag_file);
+            e
+        })?;
+        let br = BufReader::new(f);
+        let l = br.lines();
+        let m = l
+            .choose(&mut thread_rng())
+            .unwrap_or_else(|| Ok("...".to_string()))?;
+        Ok(format!("Hey {}, {}", nick, m))
+    }
+
+    doit(nick).unwrap_or_else(|x| {
+        format!("Hey {}", nick)
+    })
+}
+
+fn text_box<T: Display, S: Display>(
+    mut lines: impl Iterator<Item=T>,
+    header: Option<S>,
+) -> impl Iterator<Item=String> {
+    let mut state = 0;
+    std::iter::from_fn(move || match state {
+        0 => {
+            state += 1;
+            if let Some(ref h) = header {
+                Some(format!(",-------[ {} ]", h))
+            } else {
+                Some(",-------".to_string())
+            }
+        }
+
+        1 => match lines.next() {
+            None => {
+                state += 1;
+                Some("`-------".to_string())
+            }
+            Some(ref next) => Some(format!("| {}", next)),
+        },
+
+        _ => None,
+    })
+}
+
+fn is_json_flag_set(jv: &JsonValue) -> bool {
+    jv.as_bool().unwrap_or(false) || jv.as_number().unwrap_or_else(|| 0.into()) != 0
 }
 
 impl<'a> Client<'a> {
@@ -178,6 +745,7 @@ impl<'a> Client<'a> {
         }
 
         self.youtube_title(&dst, text.as_str()).await?;
+        url_saver(&msg, &self.settings).await?;
 
         info!("{}", msg);
 
@@ -241,7 +809,9 @@ pub(crate) async fn cmdline(mut recv: Receiver<ClientCommand>, send: Sender<Serv
             msg = recv.recv() => {
                 if let Some(msg) = &msg {
                     match msg {
-                        ClientCommand::Irc(msg) => client.handle_irc_command(msg).await?,
+                        ClientCommand::Irc(msg) => if let Err(e) = client.handle_irc_command(msg).await {
+                            error!("Client side error: {e:?}");
+                        },
 
                         ClientCommand::ServerQuit(reason) => {
                             recv.close();

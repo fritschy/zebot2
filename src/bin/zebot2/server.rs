@@ -64,10 +64,10 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
     let mut retries = 5;
 
     let mut rate_limit = leaky_bucket_lite::LeakyBucket::builder()
-        .max(3)
+        .max(9)
         .refill_amount(1)
-        .refill_interval(Duration::from_secs(1))
-        .tokens(3)
+        .refill_interval(Duration::from_millis(1333))
+        .tokens(7)
         .build();
 
     while retries > 0 {
