@@ -17,10 +17,10 @@ use chrono::Local;
 use url::Url;
 
 use crate::Settings;
-use crate::server::{ServerCommand};
+use crate::client::{ClientCommand};
 
 #[derive(Debug)]
-pub(crate) enum ClientCommand {
+pub(crate) enum ControlCommand {
     Irc(irc2::Message),
     ServerQuit(String),
 }
@@ -29,7 +29,7 @@ pub(crate) enum ClientCommand {
 struct Client<'a> {
     startup: Instant,
     settings: &'a Settings,
-    send: Sender<ServerCommand>,
+    send: Sender<ClientCommand>,
 }
 
 async fn url_saver(msg: &irc2::Message, settings: &Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -593,7 +593,7 @@ fn is_json_flag_set(jv: &JsonValue) -> bool {
 
 impl<'a> Client<'a> {
     async fn message(&self, dst: &str, msg: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.send.send(ServerCommand::Message(dst.to_string(), msg.to_string())).await?;
+        self.send.send(ClientCommand::Message(dst.to_string(), msg.to_string())).await?;
         Ok(())
     }
 
@@ -752,14 +752,14 @@ impl<'a> Client<'a> {
     }
 
     async fn logon(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.send.send(ServerCommand::Logon {nick: self.settings.nickname.clone(), realname: self.settings.realname.clone()}).await?;
+        self.send.send(ClientCommand::Logon {nick: self.settings.nickname.clone(), realname: self.settings.realname.clone()}).await?;
 
         if let Some(pwfile) = &self.settings.password_file {
             match tokio::fs::File::open(&pwfile).await {
                 Ok(mut f) => {
                     let mut pw = String::new();
                     f.read_to_string(&mut pw).await?;
-                    self.send.send(ServerCommand::Message("NickServ".to_string(), format!("identify {}", pw.trim()))).await?;
+                    self.send.send(ClientCommand::Message("NickServ".to_string(), format!("identify {}", pw.trim()))).await?;
                 }
                 Err(e) => warn!("Could not open password file {}: {:?}", &pwfile, e),
             }
@@ -767,7 +767,7 @@ impl<'a> Client<'a> {
 
         // join initial channels
         for c in self.settings.channels.iter() {
-            self.send.send(ServerCommand::Join(c.clone())).await?;
+            self.send.send(ClientCommand::Join(c.clone())).await?;
         }
 
         Ok(())
@@ -797,7 +797,7 @@ impl<'a> Client<'a> {
     }
 }
 
-pub(crate) async fn cmdline(mut recv: Receiver<ClientCommand>, send: Sender<ServerCommand>, settings: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<ClientCommand>, settings: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
     let mut line = String::with_capacity(1024);
 
@@ -808,11 +808,11 @@ pub(crate) async fn cmdline(mut recv: Receiver<ClientCommand>, send: Sender<Serv
             msg = recv.recv() => {
                 if let Some(msg) = &msg {
                     match msg {
-                        ClientCommand::Irc(msg) => if let Err(e) = client.handle_irc_command(msg).await {
+                        ControlCommand::Irc(msg) => if let Err(e) = client.handle_irc_command(msg).await {
                             error!("Client side error: {e:?}");
                         },
 
-                        ClientCommand::ServerQuit(reason) => {
+                        ControlCommand::ServerQuit(reason) => {
                             recv.close();
                             info!("Server quit: {}", reason);
                             break;
@@ -825,19 +825,19 @@ pub(crate) async fn cmdline(mut recv: Receiver<ClientCommand>, send: Sender<Serv
                 match n {
                     Err(_) => {
                         warn!("Error reading from stdin... quitting");
-                        send.send(ServerCommand::Quit).await?;
+                        send.send(ClientCommand::Quit).await?;
                         return Ok(());
                     }
                     Ok(n) if n == 0 => {
                         warn!("Got EOF... quitting");
-                        send.send(ServerCommand::Quit).await?;
+                        send.send(ClientCommand::Quit).await?;
                         continue;
                     }
                     Ok(_) => (),
                 }
 
                 let stripped = line.strip_suffix('\n').unwrap_or(&line);
-                send.send(ServerCommand::Message(settings.channels[0].clone(), stripped.to_string())).await?;
+                send.send(ClientCommand::Message(settings.channels[0].clone(), stripped.to_string())).await?;
                 line.clear();
             }
         }

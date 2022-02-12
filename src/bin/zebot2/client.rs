@@ -5,12 +5,12 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
-use crate::cmdline::{ClientCommand};
+use crate::control::{ControlCommand};
 use tracing::{info, error, debug};
 use crate::Settings;
 
 #[derive(Debug)]
-pub(crate) enum ServerCommand {
+pub(crate) enum ClientCommand {
     Message(String, String),
     Join(String),
     Leave(String),
@@ -56,7 +56,7 @@ async fn sock_send<T: AsyncWriteExt + Unpin>(sock: &mut T, rate_limit: &mut leak
     Ok(sock.write_all(data.as_bytes()).await?)
 }
 
-pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<ClientCommand>, settings: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<ControlCommand>, settings: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut sock = connect_tls(&settings).await?;
 
     let mut buf = vec![0u8; 1 << 16];
@@ -79,19 +79,19 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
 
                 let msg = msg.unwrap();
                 match msg {
-                    ServerCommand::Quit => {
+                    ClientCommand::Quit => {
                         info!("Got quit message ...");
-                        send.send(ClientCommand::ServerQuit("Received QUIT".to_string())).await?;
+                        send.send(ControlCommand::ServerQuit("Received QUIT".to_string())).await?;
                         sock_send(&mut sock, &mut rate_limit, "QUIT :Need to restart the distributed real-time Java cluster VM\r\n").await?;
                         sock.flush().await?;
                         break;
                     }
 
-                    ServerCommand::Message(dst, msg) => {
+                    ClientCommand::Message(dst, msg) => {
                         sock_send(&mut sock, &mut rate_limit, &format!("PRIVMSG {} :{}\r\n", dst, msg)).await?;
                     }
 
-                    ServerCommand::Logon {nick, realname} => {
+                    ClientCommand::Logon {nick, realname} => {
                         let msg = format!(
                             "USER {} none none :{}\r\nNICK :{}\r\n",
                             &nick, &realname, &nick,
@@ -99,11 +99,11 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                         sock_send(&mut sock, &mut rate_limit, &msg).await?;
                     }
 
-                    ServerCommand::Join(chan) => {
+                    ClientCommand::Join(chan) => {
                         sock_send(&mut sock, &mut rate_limit, &format!("JOIN :{}\r\n", chan)).await?;
                     }
 
-                    ServerCommand::Leave(chan) => {
+                    ClientCommand::Leave(chan) => {
                         sock_send(&mut sock, &mut rate_limit, &format!("PART :{}\r\n", chan)).await?;
                     }
                 }
@@ -112,7 +112,7 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
             n = tokio::time::timeout(Duration::from_secs(settings.server_timeout), sock.read(&mut buf[off ..])) => {
                 let n = match n {
                     Err(_) => {
-                        send.send(ClientCommand::ServerQuit("timeout".to_string())).await?;
+                        send.send(ControlCommand::ServerQuit("timeout".to_string())).await?;
                         return Err(Box::new(io::Error::new(io::ErrorKind::Other, "timeout")));
                     }
                     Ok(n) => n?,
@@ -157,7 +157,7 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                                 _ => (),
                             }
 
-                            send.send(ClientCommand::Irc(msg.clone())).await?;
+                            send.send(ControlCommand::Irc(msg.clone())).await?;
                         }
 
                         // Input ended, no remaining bytes, just continue as normal

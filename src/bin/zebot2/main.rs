@@ -4,8 +4,8 @@ use clap::Parser;
 use tokio::spawn;
 use tokio::sync::mpsc::{channel};
 
-mod cmdline;
-mod server;
+mod control;
+mod client;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -53,10 +53,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (client_send, server_recv) = channel(16);
     let (server_send, client_recv) = channel(16);
 
-    let srv = spawn(server::server(server_recv, server_send.clone(), args.clone()));
-    let cmdl = spawn(cmdline::cmdline(client_recv, client_send.clone(), args.clone()));
+    let cl = spawn(client::task(server_recv, server_send.clone(), args.clone()));
+    let ctrl = spawn(control::task(client_recv, client_send.clone(), args.clone()));
 
-    let result = tokio::join!(srv, cmdl);
+    let result = tokio::join!(cl, ctrl);
     result.0??;
     result.1??;
 
