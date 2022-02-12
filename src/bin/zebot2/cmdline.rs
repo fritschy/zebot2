@@ -66,19 +66,6 @@ async fn url_saver(msg: &irc2::Message, settings: &Settings) -> Result<(), Box<d
     Ok(())
 }
 
-/*
-struct SubstituteLastHandler {
-    last_msg: RefCell<HashMap<(String, String), String>>,
-}
-
-impl SubstituteLastHandler {
-    fn new() -> Self {
-        SubstituteLastHandler {
-            last_msg: RefCell::new(HashMap::new()),
-        }
-    }
-}
-
 fn parse_substitution(re: &str) -> Option<(String, String, String)> {
     let mut s = 0; // state, see below, can only increment
     let mut sep = '\0';
@@ -89,7 +76,7 @@ fn parse_substitution(re: &str) -> Option<(String, String, String)> {
         match s {
             0 => {
                 if c != 's' && c != 'S' {
-                    log_error!("Not a substitution");
+                    error!("Not a substitution");
                     return None;
                 }
                 s = 1;
@@ -121,20 +108,32 @@ fn parse_substitution(re: &str) -> Option<(String, String, String)> {
                     flags.push(c);
                 }
                 _ => {
-                    log_error!("Invalid flags");
+                    error!("Invalid flags");
                     return None;
                 }
             },
 
             _ => {
-                log_error!("Invalid state parsing re");
-                dbg!(&re, &c, &s);
+                error!("Invalid state parsing re");
                 return None;
             }
         }
     }
 
     Some((pat, subst, flags))
+}
+
+/*
+struct SubstituteLastHandler {
+    last_msg: RefCell<HashMap<(String, String), String>>,
+}
+
+impl SubstituteLastHandler {
+    fn new() -> Self {
+        SubstituteLastHandler {
+            last_msg: RefCell::new(HashMap::new()),
+        }
+    }
 }
 
 impl MessageHandler for SubstituteLastHandler {

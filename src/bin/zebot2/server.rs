@@ -60,7 +60,7 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
     let mut sock = connect_tls(&settings).await?;
 
     let mut buf = vec![0u8; 1 << 16];
-    let mut rem = 0;
+    let mut off = 0;
     let mut retries = 5;
 
     let mut rate_limit = leaky_bucket_lite::LeakyBucket::builder()
@@ -109,7 +109,7 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                 }
             }
 
-            n = tokio::time::timeout(Duration::from_secs(settings.server_timeout), sock.read(&mut buf[rem ..])) => {
+            n = tokio::time::timeout(Duration::from_secs(settings.server_timeout), sock.read(&mut buf[off ..])) => {
                 let n = match n {
                     Err(_) => {
                         send.send(ClientCommand::ServerQuit("timeout".to_string())).await?;
@@ -125,13 +125,13 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
 
                 retries = 5;
 
-                let mut data = &buf[..rem + n];
+                let mut i = &buf[..off + n];
                 let pos = 0;
 
-                while !data.is_empty() && data != b"\r\n" {
-                    match irc2::parse(data) {
+                while !i.is_empty() && i != b"\r\n" {
+                    match irc2::parse(i) {
                         Ok((r, msg)) => {
-                            data = r;
+                            i = r;
 
                             use irc2::command::CommandCode::*;
                             match msg.command {
@@ -161,25 +161,27 @@ pub(crate) async fn server(mut recv: Receiver<ServerCommand>, send: Sender<Clien
                         }
 
                         // Input ended, no remaining bytes, just continue as normal
-                        Err(e) if e.is_incomplete() && !data.is_empty() => {
+                        Err(e) if e.is_incomplete() => {
                             use nom::Offset;
                             info!("Need to read more, irc2::parse: {:?}", e);
-                            let l = data.len();
-                            let pos = buf.as_slice().offset(data);
+                            let l = i.len();
+                            let pos = buf.as_slice().offset(i);
                             dbg!(l, pos);
                             buf.copy_within(pos..pos+l, 0);
-                            rem = 0;
+                            off = pos + l;
                             break;
                         }
 
-                        Err(e) if ! data.is_empty() => {
+                        Err(e) => {
                             error!("Error from parser: {:?}", e);
-                            rem = pos;
+                            let l = i.len();
+                            off = pos + l;
+                            buf.copy_within(pos..pos+l, 0);
                             break;
                         }
 
                         _ => {
-                            rem = 0;
+                            off = 0;
                             break;
                         }
                     }
