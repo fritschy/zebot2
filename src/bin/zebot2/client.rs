@@ -49,7 +49,7 @@ async fn connect_tls(settings: &Settings) -> Result<tokio_rustls::client::TlsStr
 }
 
 async fn sock_send<T: AsyncWriteExt + Unpin>(sock: &mut T, rate_limit: &mut leaky_bucket_lite::LeakyBucket, data: &str) ->  Result<(), Box<dyn Error + Send + Sync>> {
-    rate_limit.acquire_one().await;
+    rate_limit.acquire(data.len() as u32).await;
     for part in data.split("\r\n").filter(|p| !p.is_empty()) {
         debug!("send: {}", part);
     }
@@ -64,10 +64,10 @@ pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<Control
     let mut retries = 5;
 
     let mut send_rate_limit = leaky_bucket_lite::LeakyBucket::builder()
-        .max(9)
-        .refill_amount(1)
-        .refill_interval(Duration::from_millis(1333))
-        .tokens(7)
+        .max(256)
+        .refill_amount(16)
+        .refill_interval(Duration::from_millis(333))
+        .tokens(256)
         .build();
 
     while retries > 0 {
