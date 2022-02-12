@@ -63,7 +63,7 @@ pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<Control
     let mut off = 0;
     let mut retries = 5;
 
-    let mut rate_limit = leaky_bucket_lite::LeakyBucket::builder()
+    let mut send_rate_limit = leaky_bucket_lite::LeakyBucket::builder()
         .max(9)
         .refill_amount(1)
         .refill_interval(Duration::from_millis(1333))
@@ -82,13 +82,13 @@ pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<Control
                     ClientCommand::Quit => {
                         info!("Got quit message ...");
                         send.send(ControlCommand::ServerQuit("Received QUIT".to_string())).await?;
-                        sock_send(&mut sock, &mut rate_limit, "QUIT :Need to restart the distributed real-time Java cluster VM\r\n").await?;
+                        sock_send(&mut sock, &mut send_rate_limit, "QUIT :Need to restart the distributed real-time Java cluster VM\r\n").await?;
                         sock.flush().await?;
                         break;
                     }
 
                     ClientCommand::Message(dst, msg) => {
-                        sock_send(&mut sock, &mut rate_limit, &format!("PRIVMSG {} :{}\r\n", dst, msg)).await?;
+                        sock_send(&mut sock, &mut send_rate_limit, &format!("PRIVMSG {} :{}\r\n", dst, msg)).await?;
                     }
 
                     ClientCommand::Logon {nick, realname} => {
@@ -96,15 +96,15 @@ pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<Control
                             "USER {} none none :{}\r\nNICK :{}\r\n",
                             &nick, &realname, &nick,
                         );
-                        sock_send(&mut sock, &mut rate_limit, &msg).await?;
+                        sock_send(&mut sock, &mut send_rate_limit, &msg).await?;
                     }
 
                     ClientCommand::Join(chan) => {
-                        sock_send(&mut sock, &mut rate_limit, &format!("JOIN :{}\r\n", chan)).await?;
+                        sock_send(&mut sock, &mut send_rate_limit, &format!("JOIN :{}\r\n", chan)).await?;
                     }
 
                     ClientCommand::Leave(chan) => {
-                        sock_send(&mut sock, &mut rate_limit, &format!("PART :{}\r\n", chan)).await?;
+                        sock_send(&mut sock, &mut send_rate_limit, &format!("PART :{}\r\n", chan)).await?;
                     }
                 }
             }
@@ -146,7 +146,7 @@ pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<Control
 
                                     let resp = format!("PONG {} :{}\r\n", dst, dst);
 
-                                    sock_send(&mut sock, &mut rate_limit, &resp).await?;
+                                    sock_send(&mut sock, &mut send_rate_limit, &resp).await?;
                                 }
                                 Quit => {
 

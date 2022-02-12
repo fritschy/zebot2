@@ -66,63 +66,6 @@ async fn url_saver(msg: &irc2::Message, settings: &Settings) -> Result<(), Box<d
     Ok(())
 }
 
-fn parse_substitution(re: &str) -> Option<(String, String, String)> {
-    let mut s = 0; // state, see below, can only increment
-    let mut sep = '\0';
-    let mut pat = String::with_capacity(re.len());
-    let mut subst = String::with_capacity(re.len());
-    let mut flags = String::with_capacity(re.len());
-    for c in re.chars() {
-        match s {
-            0 => {
-                if c != 's' && c != 'S' {
-                    error!("Not a substitution");
-                    return None;
-                }
-                s = 1;
-            }
-
-            1 => {
-                sep = c;
-                s = 2;
-            }
-
-            2 => {
-                if c == sep {
-                    s = 3;
-                } else {
-                    pat.push(c);
-                }
-            }
-
-            3 => {
-                if c == sep {
-                    s = 4;
-                } else {
-                    subst.push(c);
-                }
-            }
-
-            4 => match c {
-                'g' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 's' => {
-                    flags.push(c);
-                }
-                _ => {
-                    error!("Invalid flags");
-                    return None;
-                }
-            },
-
-            _ => {
-                error!("Invalid state parsing re");
-                return None;
-            }
-        }
-    }
-
-    Some((pat, subst, flags))
-}
-
 /*
 struct SubstituteLastHandler {
     last_msg: RefCell<HashMap<(String, String), String>>,
@@ -558,37 +501,6 @@ fn nag_user(nick: &str) -> String {
     doit(nick).unwrap_or_else(|x| {
         format!("Hey {}", nick)
     })
-}
-
-fn text_box<T: Display, S: Display>(
-    mut lines: impl Iterator<Item=T>,
-    header: Option<S>,
-) -> impl Iterator<Item=String> {
-    let mut state = 0;
-    std::iter::from_fn(move || match state {
-        0 => {
-            state += 1;
-            if let Some(ref h) = header {
-                Some(format!(",-------[ {} ]", h))
-            } else {
-                Some(",-------".to_string())
-            }
-        }
-
-        1 => match lines.next() {
-            None => {
-                state += 1;
-                Some("`-------".to_string())
-            }
-            Some(ref next) => Some(format!("| {}", next)),
-        },
-
-        _ => None,
-    })
-}
-
-fn is_json_flag_set(jv: &JsonValue) -> bool {
-    jv.as_bool().unwrap_or(false) || jv.as_number().unwrap_or_else(|| 0.into()) != 0
 }
 
 impl<'a> Client<'a> {

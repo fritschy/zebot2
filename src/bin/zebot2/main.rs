@@ -3,9 +3,11 @@ use std::error::Error;
 use clap::Parser;
 use tokio::spawn;
 use tokio::sync::mpsc::{channel};
+use tracing::info;
 
 mod control;
 mod client;
+mod util;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -50,6 +52,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .expect("setting tracing default failed");
 
     let args = Settings::parse();
+
+    info!("Args: {args:#?}");
+
     let (client_send, server_recv) = channel(16);
     let (server_send, client_recv) = channel(16);
 
