@@ -55,11 +55,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     info!("Args: {args:#?}");
 
-    let (client_send, server_recv) = channel(16);
-    let (server_send, client_recv) = channel(16);
+    let (control_send, client_recv) = channel(16);
+    let (client_send, control_recv) = channel(16);
 
-    let cl = spawn(client::task(server_recv, server_send.clone(), args.clone()));
-    let ctrl = spawn(control::task(client_recv, client_send.clone(), args.clone()));
+    let cl = spawn(client::task(client_recv, client_send.clone(), args.clone()));
+    let ctrl = spawn(control::task(control_recv, control_send.clone(), client_send.clone(), args.clone()));
 
     let result = tokio::join!(cl, ctrl);
     result.0??;

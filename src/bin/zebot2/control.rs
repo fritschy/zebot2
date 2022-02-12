@@ -3,17 +3,19 @@ use std::fmt::Display;
 use std::io;
 use std::io::BufReader;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use json::JsonValue;
 use nom::AsBytes;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use rand::prelude::*;
 use std::io::BufRead;
-use chrono::Local;
+use std::thread::sleep;
+use chrono::{Local};
+use tokio::spawn;
 use url::Url;
 
 use crate::Settings;
@@ -23,6 +25,7 @@ use crate::client::{ClientCommand};
 pub(crate) enum ControlCommand {
     Irc(irc2::Message),
     ServerQuit(String),
+    TaskDone(Option<(String, String)>),
 }
 
 #[derive(Debug)]
@@ -366,27 +369,6 @@ impl MessageHandler for Callouthandler {
     }
 }
 
-fn greet(nick: &str) -> String {
-    const PATS: &[&str] = &[
-        "Hey {}!",
-        "Moin {}, o/",
-        "Moin {}, \\o",
-        "Moin {}, \\o/",
-        "Moin {}, _o/",
-        "Moin {}, \\o_",
-        "Moin {}, o_/",
-        "OI, Ein {}!",
-        "{}, n'Moin!",
-        "{}, grüß Gott, äh - Zeus! Was gibt's denn Neu's?",
-    ];
-
-    if let Some(s) = PATS.iter().choose(&mut thread_rng()) {
-        return s.to_string().replace("{}", nick);
-    }
-
-    String::from("Hey ") + nick
-}
-
 impl MessageHandler for GreetHandler {
     fn handle(
         &self,
@@ -482,6 +464,27 @@ fn handle(
 }
 */
 
+fn greet(nick: &str) -> String {
+    const PATS: &[&str] = &[
+        "Hey {}!",
+        "Moin {}, o/",
+        "Moin {}, \\o",
+        "Moin {}, \\o/",
+        "Moin {}, _o/",
+        "Moin {}, \\o_",
+        "Moin {}, o_/",
+        "OI, Ein {}!",
+        "{}, n'Moin!",
+        "{}, grüß Gott, äh - Zeus! Was gibt's denn Neu's?",
+    ];
+
+    if let Some(s) = PATS.iter().choose(&mut thread_rng()) {
+        return s.to_string().replace("{}", nick);
+    }
+
+    String::from("Hey ") + nick
+}
+
 fn nag_user(nick: &str) -> String {
     fn doit(nick: &str) -> Result<String, io::Error> {
         let nick = nick.replace(|x: char| !x.is_alphanumeric(), "_");
@@ -501,6 +504,92 @@ fn nag_user(nick: &str) -> String {
     doit(nick).unwrap_or_else(|x| {
         format!("Hey {}", nick)
     })
+}
+
+async fn youtube_title(dst: String, text: String, send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let yt_re = regex::Regex::new(r"https?://((www.)?youtube\.com/watch|youtu.be/)").unwrap();
+    for url in text
+        .split_ascii_whitespace()
+        .filter(|&x| x.starts_with("https://") || x.starts_with("http://")) {
+        if yt_re.is_match(url) {
+            if let Ok(output) = Command::new("python3")
+                // .current_dir("youtube-dl")
+                .args(&[
+                    "-m", "yt_dlp", "--quiet", "--get-title", "--socket-timeout", "15", url,
+                ])
+                .output().await {
+                let err = String::from_utf8_lossy(output.stderr.as_ref());
+                if !err.is_empty() {
+                    error!("Got error from youtube-dl: {}", err);
+                    send.send(ControlCommand::TaskDone(Some((dst.to_string(), format!("Got an error for URL {}, is this a valid video URL?", &url))))).await?;
+                } else {
+                    let title = String::from_utf8_lossy(output.stdout.as_ref());
+                    if !title.is_empty() {
+                        send.send(ControlCommand::TaskDone(Some((dst.to_string(), format!("{} has title '{}'", &url, title.trim()))))).await?;
+                    }
+                }
+            }
+        } else {
+            // xpath: "//html/body/*[local-name() = \"h1\"]/text()"
+
+            // let r = reqwest::get(url).await?;
+            // let b = r.text().await?;
+
+            // let mut in_h1 = false;
+            // for token in html5gum::Tokenizer::new(&b).infallible() {
+            //     match token {
+            //         html5gum::Token::StartTag(tag) if tag.name.as_slice().to_ascii_lowercase() == b"h1" => {
+            //             in_h1 = true;
+            //         }
+            //         html5gum::Token::String(s) if in_h1 => {
+            //             dbg!(String::from_utf8_lossy(s.as_slice()));
+            //         }
+            //         html5gum::Token::EndTag(tag) if tag.name.as_slice().to_ascii_lowercase() == b"h1" => {
+            //             in_h1 = false;
+            //             break;
+            //         }
+            //         _ => (),
+            //     }
+            // }
+
+            // // xml parser; doesn't pars e.g. https://heise.de/
+            // let mut er = xml::EventReader::new(BufReader::new(b.as_bytes()));
+            // let mut in_h1 = false;
+            // for e in er {
+            //     dbg!(&e);
+            //     match &e {
+            //         Ok(xml::reader::XmlEvent::StartElement { name, .. }) if name.to_string() == "h1" => {
+            //             in_h1 = true;
+            //         }
+            //         Ok(xml::reader::XmlEvent::Characters(s)) if in_h1 => {
+            //             info!("Got string from h1: '{}'", s);
+            //         }
+            //         Ok(xml::reader::XmlEvent::EndElement { name, .. }) if name.to_string() == "h1" => {
+            //             in_h1 = false;
+            //             break;
+            //         }
+            //         _ => (),
+            //     }
+            // }
+
+
+            //    // I can't figure out how to not make this one crash with tokio...
+            //    use select::document::Document;
+            //    use select::predicate::{Class, Name};
+            //    let r = reqwest::get(url).await;
+            //    if let Ok(r) = r {
+            //        if let Ok(s) = r.text().await {
+            //            let d = Mutex::new(Document::from(s.as_str()));
+            //            if let Some(h1) = d.lock().await.find(Name("h1")).next() {
+            //                let title = h1.text();
+            //                self.message(dst, &format!("{} has title '{}'", &url, title.trim())).await?;
+            //            }
+            //        }
+            //    }
+        }
+    }
+
+    Ok(())
 }
 
 impl<'a> Client<'a> {
@@ -546,92 +635,7 @@ impl<'a> Client<'a> {
         Ok(())
     }
 
-    async fn youtube_title(&self, dst: &str, text: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let yt_re = regex::Regex::new(r"https?://((www.)?youtube\.com/watch|youtu.be/)").unwrap();
-        for url in text
-            .split_ascii_whitespace()
-            .filter(|&x| x.starts_with("https://") || x.starts_with("http://")) {
-            if yt_re.is_match(url) {
-                if let Ok(output) = Command::new("python3")
-                    .current_dir("youtube-dl")
-                    .args(&[
-                        "-m", "youtube_dl", "--quiet", "--get-title", "--socket-timeout", "5", url,
-                    ])
-                    .output().await {
-                    let err = String::from_utf8_lossy(output.stderr.as_ref());
-                    if !err.is_empty() {
-                        error!("Got error from youtube-dl: {}", err);
-                        self.message(dst, &format!("Got an error for URL {}, is this a valid video URL?", &url)).await?;
-                    } else {
-                        let title = String::from_utf8_lossy(output.stdout.as_ref());
-                        if !title.is_empty() {
-                            self.message(dst, &format!("{} has title '{}'", &url, title.trim())).await?;
-                        }
-                    }
-                }
-            } else {
-                // xpath: "//html/body/*[local-name() = \"h1\"]/text()"
-
-                // let r = reqwest::get(url).await?;
-                // let b = r.text().await?;
-
-                // let mut in_h1 = false;
-                // for token in html5gum::Tokenizer::new(&b).infallible() {
-                //     match token {
-                //         html5gum::Token::StartTag(tag) if tag.name.as_slice().to_ascii_lowercase() == b"h1" => {
-                //             in_h1 = true;
-                //         }
-                //         html5gum::Token::String(s) if in_h1 => {
-                //             dbg!(String::from_utf8_lossy(s.as_slice()));
-                //         }
-                //         html5gum::Token::EndTag(tag) if tag.name.as_slice().to_ascii_lowercase() == b"h1" => {
-                //             in_h1 = false;
-                //             break;
-                //         }
-                //         _ => (),
-                //     }
-                // }
-
-                // // xml parser; doesn't pars e.g. https://heise.de/
-                // let mut er = xml::EventReader::new(BufReader::new(b.as_bytes()));
-                // let mut in_h1 = false;
-                // for e in er {
-                //     dbg!(&e);
-                //     match &e {
-                //         Ok(xml::reader::XmlEvent::StartElement { name, .. }) if name.to_string() == "h1" => {
-                //             in_h1 = true;
-                //         }
-                //         Ok(xml::reader::XmlEvent::Characters(s)) if in_h1 => {
-                //             info!("Got string from h1: '{}'", s);
-                //         }
-                //         Ok(xml::reader::XmlEvent::EndElement { name, .. }) if name.to_string() == "h1" => {
-                //             in_h1 = false;
-                //             break;
-                //         }
-                //         _ => (),
-                //     }
-                // }
-
-
-            //    // I can't figure out how to not make this one crash with tokio...
-            //    use select::document::Document;
-            //    use select::predicate::{Class, Name};
-            //    let r = reqwest::get(url).await;
-            //    if let Ok(r) = r {
-            //        if let Ok(s) = r.text().await {
-            //            let d = Mutex::new(Document::from(s.as_str()));
-            //            if let Some(h1) = d.lock().await.find(Name("h1")).next() {
-            //                let title = h1.text();
-            //                self.message(dst, &format!("{} has title '{}'", &url, title.trim())).await?;
-            //            }
-            //        }
-            //    }
-            }
-        }
-        Ok(())
-    }
-
-    async fn handle_privmsg(&self, msg: &irc2::Message) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_privmsg(&self, msg: &irc2::Message, send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let cmd = &msg.command;
 
         if cmd != &irc2::command::CommandCode::PrivMsg {
@@ -655,8 +659,9 @@ impl<'a> Client<'a> {
             return Ok(());
         }
 
-        self.youtube_title(&dst, text.as_str()).await?;
         url_saver(&msg, &self.settings).await?;
+
+        spawn(youtube_title(dst.clone(), text.clone(), send.clone()));
 
         info!("{}", msg);
 
@@ -685,7 +690,7 @@ impl<'a> Client<'a> {
         Ok(())
     }
 
-    async fn handle_irc_command(&self, msg: &irc2::Message) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_irc_command(&self, msg: &irc2::Message, answer: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
         use irc2::command::CommandCode;
 
         let args = &msg.params;
@@ -698,7 +703,7 @@ impl<'a> Client<'a> {
                 && args[1].contains("Checking Ident")
                 && matches!(pfx, Some(irc2::Prefix::Server(_))) => self.logon().await?,
 
-            CommandCode::PrivMsg => self.handle_privmsg(msg).await?,
+            CommandCode::PrivMsg => self.handle_privmsg(msg, answer.clone()).await?,
 
             _ => {
                 warn!("Missing handler: {}", msg);
@@ -709,7 +714,7 @@ impl<'a> Client<'a> {
     }
 }
 
-pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<ClientCommand>, settings: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<ClientCommand>, control_send: Sender<ControlCommand>, settings: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
     let mut line = String::with_capacity(1024);
 
@@ -720,7 +725,7 @@ pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<Client
             msg = recv.recv() => {
                 if let Some(msg) = &msg {
                     match msg {
-                        ControlCommand::Irc(msg) => if let Err(e) = client.handle_irc_command(msg).await {
+                        ControlCommand::Irc(msg) => if let Err(e) = client.handle_irc_command(msg, control_send.clone()).await {
                             error!("Client side error: {e:?}");
                         },
 
@@ -729,6 +734,13 @@ pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<Client
                             info!("Server quit: {}", reason);
                             break;
                         }
+
+                        ControlCommand::TaskDone(Some((dst, msg))) => {
+                            info!("TaskDone({dst}, {msg})");
+                            send.send(ClientCommand::Message(dst.clone(), msg.clone())).await?;
+                        }
+
+                        ControlCommand::TaskDone(_) => (),
                     }
                 }
             }
