@@ -715,6 +715,8 @@ impl<'a> Client<'a> {
 
             CommandCode::PrivMsg => self.handle_privmsg(msg, answer.clone()).await?,
 
+            CommandCode::Join => self.message(&msg.get_reponse_destination(&self.settings.channels), &greet(&msg.get_nick())).await?,
+
             _ => {
                 warn!("Missing handler: {}", msg);
             }
