@@ -4,7 +4,6 @@ use irc2::{Message, Prefix};
 use rand::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -750,10 +749,6 @@ pub(crate) async fn task(
     debug!("settings={settings:#?}");
 
     loop {
-        // A prompt...?
-        std::io::stdout().write(b"> ");
-        std::io::stdout().flush();
-
         tokio::select! {
             msg = recv.recv() => {
                 if let Some(msg) = &msg {

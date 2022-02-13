@@ -3,7 +3,6 @@ use crate::readerbuf::ReaderBuf;
 use crate::Settings;
 use std::error::Error;
 use std::io;
-use std::io::ErrorKind;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,7 +62,7 @@ async fn sock_send<T: AsyncWriteExt + Unpin>(
     rate_limit: &mut leaky_bucket_lite::LeakyBucket,
     data: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    rate_limit.acquire(data.len() as u32).await;
+    rate_limit.acquire_one().await;
     for part in data.split("\r\n").filter(|p| !p.is_empty()) {
         debug!("send: {}", part);
     }
@@ -81,10 +80,10 @@ pub(crate) async fn task(
     let mut retries = 5;
 
     let mut send_rate_limit = leaky_bucket_lite::LeakyBucket::builder()
-        .max(384)
-        .refill_amount(16)
-        .refill_interval(Duration::from_millis(333))
-        .tokens(384)
+        .max(9)
+        .refill_amount(1)
+        .refill_interval(Duration::from_millis(1333))
+        .tokens(7)
         .build();
 
     while retries > 0 {
