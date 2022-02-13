@@ -19,23 +19,6 @@ use crate::client::ClientCommand;
 use crate::util::{greet, is_json_flag_set, nag_user, parse_substitution, text_box, zebot_version};
 use crate::Settings;
 
-#[derive(Debug)]
-pub(crate) enum ControlCommand {
-    Irc(irc2::Message),
-    ServerQuit(String),
-    TaskMessage(String, String),
-}
-
-#[derive(Debug)]
-struct Client {
-    startup: Instant,
-    settings: Arc<Settings>,
-    send: Sender<ClientCommand>,
-
-    last_msg: BTreeMap<(String, String), String>,
-    last: HashMap<Prefix, Instant>,
-}
-
 async fn url_saver(
     msg: &irc2::Message,
     settings: Arc<Settings>,
@@ -74,18 +57,13 @@ async fn url_saver(
     Ok(())
 }
 
-pub enum HandlerResult {
-    Handled,
-    NotInterested,
-}
-
 async fn callout(
     msg: irc2::Message,
     settings: Arc<Settings>,
     send: Sender<ControlCommand>,
-) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     if msg.params.len() < 2 || !msg.params[1].starts_with('!') {
-        return Ok(HandlerResult::NotInterested);
+        return Ok(());
     }
 
     let command = msg.params[1][1..]
@@ -96,7 +74,7 @@ async fn callout(
         .chars()
         .all(|x| x.is_ascii_alphanumeric() || x == '-' || x == '_')
     {
-        return Ok(HandlerResult::NotInterested);
+        return Ok(());
     }
 
     let command = command.to_lowercase();
@@ -104,7 +82,7 @@ async fn callout(
     let path = format!("./handlers/{}", command);
 
     if !Path::new(&path).exists() {
-        return Ok(HandlerResult::NotInterested);
+        return Ok(());
     }
 
     let nick = msg.get_nick();
@@ -127,135 +105,143 @@ async fn callout(
     dbg!(&args);
 
     spawn(async move {
-        let s = Instant::now();
-        let cmd = Command::new("/usr/bin/timeout")
-            .arg("30s")
-            .arg(path)
-            .args(&args)
-            .output()
-            .await;
-        let s = s.elapsed();
+        async fn wrapper(msg: Message, command: String, path: String, args: Vec<String>, settings: Arc<Settings>, send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
+            let s = Instant::now();
+            let cmd = Command::new("/usr/bin/timeout")
+                .arg("30s")
+                .arg(path)
+                .args(&args)
+                .output()
+                .await;
+            let s = s.elapsed();
 
-        info!("Handler {} completed in {:?}", command, s);
+            info!("Handler {} completed in {:?}", command, s);
 
-        match cmd {
-            Ok(p) => {
-                if !p.status.success() {
-                    let dst = msg.get_reponse_destination(&settings.channels);
-                    error!("Handler failed with code {}", p.status.code().unwrap());
-                    dbg!(&p);
-                    send.send(ControlCommand::TaskMessage(
-                        dst,
-                        "Somehow, that did not work...".to_string(),
-                    ))
-                    .await;
-                    return;
-                }
+            match cmd {
+                Ok(p) => {
+                    if !p.status.success() {
+                        let dst = msg.get_reponse_destination(&settings.channels);
+                        error!("Handler failed with code {}", p.status.code().unwrap());
+                        dbg!(&p);
+                        send.send(ControlCommand::TaskMessage(
+                            dst,
+                            "Somehow, that did not work...".to_string(),
+                        ))
+                        .await?;
+                        return Ok(());
+                    }
 
-                if let Ok(response) = String::from_utf8(p.stdout) {
-                    dbg!(&response);
-                    match json::parse(&response) {
-                        Ok(response) => {
-                            let dst = if response.contains("dst") {
-                                response["dst"].to_string()
-                            } else {
-                                msg.get_reponse_destination(&settings.channels)
-                            };
+                    if let Ok(response) = String::from_utf8(p.stdout) {
+                        dbg!(&response);
+                        match json::parse(&response) {
+                            Ok(response) => {
+                                let dst = if response.contains("dst") {
+                                    response["dst"].to_string()
+                                } else {
+                                    msg.get_reponse_destination(&settings.channels)
+                                };
 
-                            if response.contains("error") {
-                                dbg!(&response);
-                                send.send(ControlCommand::TaskMessage(
-                                    dst,
-                                    "Somehow, that did not work...".to_string(),
-                                ))
-                                .await;
-                                return;
-                            } else if !is_json_flag_set(&response["box"]) {
-                                for l in response["lines"].members() {
+                                if response.contains("error") {
+                                    dbg!(&response);
                                     send.send(ControlCommand::TaskMessage(
-                                        dst.clone(),
-                                        l.to_string(),
+                                        dst,
+                                        "Somehow, that did not work...".to_string(),
                                     ))
-                                    .await;
-                                }
-                            } else {
-                                let lines = response["lines"]
-                                    .members()
-                                    .map(|x| x.to_string())
-                                    .collect::<Vec<_>>();
-                                let lines = if is_json_flag_set(&response["wrap"])
-                                    && lines.iter().map(|x| x.len()).any(|l| l > 80)
-                                {
-                                    let nlines = lines.len();
+                                    .await?;
+                                    return Ok(());
+                                } else if !is_json_flag_set(&response["box"]) {
+                                    for l in response["lines"].members() {
+                                        send.send(ControlCommand::TaskMessage(
+                                            dst.clone(),
+                                            l.to_string(),
+                                        ))
+                                        .await?;
+                                    }
+                                } else {
+                                    let lines = response["lines"]
+                                        .members()
+                                        .map(|x| x.to_string())
+                                        .collect::<Vec<_>>();
+                                    let lines = if is_json_flag_set(&response["wrap"])
+                                        && lines.iter().map(|x| x.len()).any(|l| l > 80)
+                                    {
+                                        let nlines = lines.len();
 
-                                    let s = if lines[nlines - 1].starts_with("    ") {
-                                        let (lines, last) = lines.split_at(nlines - 1);
+                                        let s = if lines[nlines - 1].starts_with("    ") {
+                                            let (lines, last) = lines.split_at(nlines - 1);
 
-                                        let s = lines.concat();
-                                        let s = textwrap::fill(&s, 80);
+                                            let s = lines.concat();
+                                            let s = textwrap::fill(&s, 80);
 
-                                        let s = s + "\n";
-                                        s + last[0].as_str()
+                                            let s = s + "\n";
+                                            s + last[0].as_str()
+                                        } else {
+                                            let s = lines.concat();
+                                            textwrap::fill(&s, 80)
+                                        };
+
+                                        s.split(|f| f == '\n')
+                                            .map(|x| x.to_string())
+                                            .collect::<Vec<_>>()
+                                    } else if is_json_flag_set(&response["wrap_single_lines"]) {
+                                        let mut new_lines = Vec::with_capacity(lines.len());
+                                        let opt = textwrap::Options::new(80)
+                                            .word_splitter(NoHyphenation)
+                                            .subsequent_indent("  ");
+                                        for l in lines {
+                                            new_lines.extend(
+                                                textwrap::wrap(&l, &opt).iter().map(|x| x.to_string()),
+                                            );
+                                        }
+                                        new_lines
                                     } else {
-                                        let s = lines.concat();
-                                        textwrap::fill(&s, 80)
+                                        lines
                                     };
 
-                                    s.split(|f| f == '\n')
-                                        .map(|x| x.to_string())
-                                        .collect::<Vec<_>>()
-                                } else if is_json_flag_set(&response["wrap_single_lines"]) {
-                                    let mut new_lines = Vec::with_capacity(lines.len());
-                                    let opt = textwrap::Options::new(80)
-                                        .word_splitter(NoHyphenation)
-                                        .subsequent_indent("  ");
-                                    for l in lines {
-                                        new_lines.extend(
-                                            textwrap::wrap(&l, &opt).iter().map(|x| x.to_string()),
-                                        );
+                                    // append link if provided
+                                    let lines = if let Some(s) = response["link"].as_str() {
+                                        let mut lines = lines;
+                                        lines.push(format!("    -- {}", s));
+                                        lines
+                                    } else {
+                                        lines
+                                    };
+
+                                    for i in text_box(lines.iter(), response["title"].as_str()) {
+                                        send.send(ControlCommand::TaskMessage(dst.clone(), i)).await?;
                                     }
-                                    new_lines
-                                } else {
-                                    lines
-                                };
-
-                                // append link if provided
-                                let lines = if let Some(s) = response["link"].as_str() {
-                                    let mut lines = lines;
-                                    lines.push(format!("    -- {}", s));
-                                    lines
-                                } else {
-                                    lines
-                                };
-
-                                for i in text_box(lines.iter(), response["title"].as_str()) {
-                                    send.send(ControlCommand::TaskMessage(dst.clone(), i)).await;
                                 }
                             }
-                        }
 
-                        Err(e) => {
-                            // Perhaps have this as a fallback for non-json handlers? What could possibly go wrong!
-                            error!(
+                            Err(e) => {
+                                // Perhaps have this as a fallback for non-json handlers? What could possibly go wrong!
+                                error!(
                                 "Could not parse json from handler {}: {}",
                                 command, response
                             );
-                            error!("Error: {:?}", e);
+                                error!("Error: {:?}", e);
+                            }
                         }
+                    } else {
+                        error!("Could not from_utf8 for handler {}", command);
                     }
-                } else {
-                    error!("Could not from_utf8 for handler {}", command);
+                }
+
+                Err(e) => {
+                    error!("Could not execute handler: {:?}", e);
+                    return Ok(());
                 }
             }
 
-            Err(e) => {
-                error!("Could not execute handler: {:?}", e);
-                return;
-            }
+            Ok(())
+        }
+
+        if let Err(e) = wrapper(msg, command, path, args, settings, send).await {
+            error!("Callout errored: {e:?}");
         }
     });
 
-    Ok(HandlerResult::Handled)
+    Ok(())
 }
 
 async fn youtube_title(
@@ -315,7 +301,24 @@ async fn youtube_title(
     Ok(())
 }
 
-impl Client {
+#[derive(Debug)]
+pub(crate) enum ControlCommand {
+    Irc(irc2::Message),
+    ServerQuit(String),
+    TaskMessage(String, String),
+}
+
+#[derive(Debug)]
+struct Control {
+    startup: Instant,
+    settings: Arc<Settings>,
+    send: Sender<ClientCommand>,
+
+    last_msg: BTreeMap<(String, String), String>,
+    last: HashMap<Prefix, Instant>,
+}
+
+impl Control {
     async fn message(&self, dst: &str, msg: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.send
             .send(ClientCommand::Message(dst.to_string(), msg.to_string()))
@@ -639,7 +642,7 @@ pub(crate) async fn task(
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
     let mut line = String::with_capacity(1024);
 
-    let mut client = Client {
+    let mut client = Control {
         startup: Instant::now(),
         settings: settings.clone(),
         send: send.clone(),
