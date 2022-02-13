@@ -1,10 +1,12 @@
 use std::error::Error;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::Parser;
 use tokio::spawn;
 use tokio::sync::mpsc::channel;
-use tracing::info;
+use tokio::time::sleep;
+use tracing::{error, info};
 
 mod client;
 mod control;
@@ -41,6 +43,9 @@ struct Settings {
     /// Extra options e.g. -x youtube_dl=$PWD/youtube-dl
     #[clap(short = 'x', long = "extra")]
     extra_opts: Vec<String>,
+
+    #[clap(short = 'R', long, parse(from_flag))]
+    restart: bool,
 }
 
 fn validate_channel(arg: &str) -> Result<String, String> {
@@ -60,20 +65,7 @@ impl Settings {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let my_subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::INFO)
-        .with_thread_ids(false)
-        .with_thread_names(false)
-        .finish();
-    tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
-
-    let args = Settings::parse();
-    let args = Arc::new(args);
-
-    info!("This is ZeBot2 {}", util::zebot_version());
-
+async fn startup(args: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (control_send, client_recv) = channel(16);
     let (client_send, control_recv) = channel(16);
 
@@ -88,6 +80,36 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let result = tokio::join!(cl, ctrl);
     result.0??;
     result.1??;
+
+    Ok(())
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let my_subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(tracing::Level::INFO)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .finish();
+    tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
+
+    let args = Settings::parse();
+    let args = Arc::new(args);
+
+    info!("This is ZeBot2 {}", util::zebot_version());
+
+    if args.restart {
+        loop {
+            if let Err(e) = startup(args.clone()).await {
+                error!("There was an unrecoverable error: {e:?}");
+            }
+            info!("Sleeping for 10 seconds before restart...");
+            sleep(Duration::from_secs(10)).await;
+            info!("Starting again!");
+        }
+    } else {
+        startup(args).await?;
+    }
 
     std::process::exit(0);
 }
