@@ -520,8 +520,14 @@ impl Control {
         }
 
         if text
-            .split_ascii_whitespace()
-            .any(|w| w == self.settings.nickname)
+            .split(|c: char| {
+                (c.is_whitespace() || c.is_ascii_punctuation())
+                    && !self.settings.nickname.contains(c)
+            })
+            .any(|w| {
+                info!("split, w={w}");
+                w == self.settings.nickname
+            })
         {
             return_if_handled!(self.zebot_answer(msg, &msg.get_nick(), &dst).await?);
         }
