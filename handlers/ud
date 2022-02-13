@@ -9,7 +9,13 @@ url = "https://www.urbandictionary.com/define.php?term={}".format(args)
 with urlopen(url) as r:
     bs=BS(r.read(), features="lxml")
 
-title = bs.find("div", attrs={"class": "def-header"}).text.strip()
+try:
+    title = bs.find("h1", attrs={"class": "flex-1"}).text.strip()
+except:
+    try:
+        title = bs.find("a", attrs={"class": "text-denim"}).text.strip()
+    except:
+        title = args
 
 lines = []
 numbered = False
