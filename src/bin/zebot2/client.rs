@@ -3,13 +3,14 @@ use crate::readerbuf::ReaderBuf;
 use crate::Settings;
 use std::error::Error;
 use std::io;
+use std::io::ErrorKind;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug)]
 pub(crate) enum ClientCommand {
@@ -160,10 +161,13 @@ pub(crate) async fn task(
                                     sock_send(&mut sock, &mut send_rate_limit, &resp).await?;
                                 }
                                 Quit => {
+                                    warn!("Received QUIT from server: {msg}");
+                                    return Ok(());
 
                                 }
                                 Error => {
-
+                                    error!("Error from server: {msg}");
+                                    return Err(Box::new(io::Error::new(io::ErrorKind::Other, "IRC Error from Server")));
                                 }
                                 _ => (),
                             }
