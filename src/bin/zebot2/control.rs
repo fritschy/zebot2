@@ -4,6 +4,7 @@ use irc2::{Message, Prefix};
 use rand::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -535,10 +536,10 @@ impl Control {
         }
 
         if text
-            .split(|c: char| {
+            .split(|c: char|
                 (c.is_whitespace() || c.is_ascii_punctuation())
                     && !self.settings.nickname.contains(c)
-            })
+            )
             .any(|w| w == self.settings.nickname)
         {
             return_if_handled!(self.zebot_answer(msg, &msg.get_nick(), &dst).await?);
@@ -698,6 +699,35 @@ impl Control {
 
         Ok(HandlerResult::Handled)
     }
+
+    async fn handle_command(&mut self, line: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let line = &line[1..];
+        let (cmd, args) = if let Some(space) = line.find(' ') {
+            line.split_at(space)
+        } else {
+            (line, "")
+        };
+
+        let args = if args.len() > 1 {
+            &args[1..]
+        } else {
+            args
+        };
+
+        match cmd {
+            "help" => {
+                println!("Nothing here ... yet!");
+            }
+
+            "quote" => {
+                self.message(&self.settings.channels[0], args).await?;
+            }
+
+            _ => (),
+        }
+
+        Ok(())
+    }
 }
 
 pub(crate) async fn task(
@@ -720,13 +750,17 @@ pub(crate) async fn task(
     debug!("settings={settings:#?}");
 
     loop {
+        // A prompt...?
+        std::io::stdout().write(b"> ");
+        std::io::stdout().flush();
+
         tokio::select! {
             msg = recv.recv() => {
                 if let Some(msg) = &msg {
                     match msg {
                         ControlCommand::Irc(msg) => if let Err(e) = client.handle_irc_command(msg, control_send.clone()).await {
                             error!("Client side error: {e:?}");
-                        },
+                        }
 
                         ControlCommand::ServerQuit(reason) => {
                             recv.close();
@@ -757,7 +791,12 @@ pub(crate) async fn task(
                 }
 
                 let stripped = line.strip_suffix('\n').unwrap_or(&line);
-                send.send(ClientCommand::Message(settings.channels[0].clone(), stripped.to_string())).await?;
+
+                if stripped.starts_with('!') {
+                    client.handle_command(stripped).await?;
+                } else {
+                    send.send(ClientCommand::Message(settings.channels[0].clone(), stripped.to_string())).await?;
+                }
                 line.clear();
             }
         }
