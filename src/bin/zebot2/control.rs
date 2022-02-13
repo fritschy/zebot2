@@ -360,6 +360,8 @@ impl Client {
         _args: &[&str],
         send: Sender<ControlCommand>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let cmd = cmd.split_ascii_whitespace().next().unwrap_or("");
+
         match cmd {
             "!up" | "!uptime" => self.handle_command_uptime(dst).await?,
             "!ver" | "!version" => {
@@ -369,21 +371,19 @@ impl Client {
                 )
                 .await?
             }
-            "!nag" => self.message(dst, &nag_user(dst)).await?,
+            "!nag" => self.message(dst, &nag_user(&msg.get_nick())).await?,
             "!echo" => {
                 let m = &msg.params[1];
                 if m.len() > 6 {
                     let m = &m[6..];
                     if !m.is_empty() {
-                        send.send(ControlCommand::TaskMessage(dst.to_string(), m.to_string()))
-                            .await?;
+                        self.message(dst, m).await?;
                     }
                 }
             }
             "!exec" | "!sh" | "!shell" | "!powershell" | "!power-shell" => {
                 let m = format!("Na aber wer wird denn gleich, {}", msg.get_nick());
-                send.send(ControlCommand::TaskMessage(dst.to_string(), m))
-                    .await?;
+                self.message(dst, &m).await?;
             }
             _ => {
                 callout(msg.clone(), self.settings.clone(), send.clone()).await?;
