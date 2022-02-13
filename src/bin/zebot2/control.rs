@@ -33,13 +33,13 @@ pub(crate) enum ControlCommand {
 }
 
 #[derive(Debug)]
-struct Client<'a> {
+struct Client {
     startup: Instant,
-    settings: &'a Settings,
+    settings: Arc<Settings>,
     send: Sender<ClientCommand>,
 }
 
-async fn url_saver(msg: &irc2::Message, settings: &Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn url_saver(msg: &irc2::Message, settings: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut filename = String::new();
     for x in settings.extra_opts.iter() {
         if let Some(x) = x.strip_prefix("url_store=") {
@@ -312,7 +312,7 @@ pub enum HandlerResult {
     Error(String),
 }
 
-async fn callout(msg: irc2::Message, settings: Settings, send: Sender<ControlCommand>) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
+async fn callout(msg: irc2::Message, settings: Arc<Settings>, send: Sender<ControlCommand>) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
     if msg.params.len() < 2 || !msg.params[1].starts_with('!') {
         return Ok(HandlerResult::NotInterested);
     }
@@ -514,7 +514,7 @@ fn nag_user(nick: &str) -> String {
     })
 }
 
-async fn youtube_title(dst: String, text: String, send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn youtube_title(dst: String, text: String, send: Sender<ControlCommand>, settings: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let yt_re = regex::Regex::new(r"https?://((www.)?youtube\.com/watch|youtu.be/)").unwrap();
     for url in text
         .split_ascii_whitespace()
@@ -538,69 +538,14 @@ async fn youtube_title(dst: String, text: String, send: Sender<ControlCommand>) 
                 }
             }
         } else {
-            // xpath: "//html/body/*[local-name() = \"h1\"]/text()"
-
-            // let r = reqwest::get(url).await?;
-            // let b = r.text().await?;
-
-            // let mut in_h1 = false;
-            // for token in html5gum::Tokenizer::new(&b).infallible() {
-            //     match token {
-            //         html5gum::Token::StartTag(tag) if tag.name.as_slice().to_ascii_lowercase() == b"h1" => {
-            //             in_h1 = true;
-            //         }
-            //         html5gum::Token::String(s) if in_h1 => {
-            //             dbg!(String::from_utf8_lossy(s.as_slice()));
-            //         }
-            //         html5gum::Token::EndTag(tag) if tag.name.as_slice().to_ascii_lowercase() == b"h1" => {
-            //             in_h1 = false;
-            //             break;
-            //         }
-            //         _ => (),
-            //     }
-            // }
-
-            // // xml parser; doesn't pars e.g. https://heise.de/
-            // let mut er = xml::EventReader::new(BufReader::new(b.as_bytes()));
-            // let mut in_h1 = false;
-            // for e in er {
-            //     dbg!(&e);
-            //     match &e {
-            //         Ok(xml::reader::XmlEvent::StartElement { name, .. }) if name.to_string() == "h1" => {
-            //             in_h1 = true;
-            //         }
-            //         Ok(xml::reader::XmlEvent::Characters(s)) if in_h1 => {
-            //             info!("Got string from h1: '{}'", s);
-            //         }
-            //         Ok(xml::reader::XmlEvent::EndElement { name, .. }) if name.to_string() == "h1" => {
-            //             in_h1 = false;
-            //             break;
-            //         }
-            //         _ => (),
-            //     }
-            // }
-
-
-            //    // I can't figure out how to not make this one crash with tokio...
-            //    use select::document::Document;
-            //    use select::predicate::{Class, Name};
-            //    let r = reqwest::get(url).await;
-            //    if let Ok(r) = r {
-            //        if let Ok(s) = r.text().await {
-            //            let d = Mutex::new(Document::from(s.as_str()));
-            //            if let Some(h1) = d.lock().await.find(Name("h1")).next() {
-            //                let title = h1.text();
-            //                self.message(dst, &format!("{} has title '{}'", &url, title.trim())).await?;
-            //            }
-            //        }
-            //    }
+            // FIXME: this should be a generic "get the header" code path
         }
     }
 
     Ok(())
 }
 
-impl<'a> Client<'a> {
+impl Client {
     async fn message(&self, dst: &str, msg: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.send.send(ClientCommand::Message(dst.to_string(), msg.to_string())).await?;
         Ok(())
@@ -665,13 +610,13 @@ impl<'a> Client<'a> {
 
         let text = &args[1];
 
-        url_saver(&msg, &self.settings).await?;
+        url_saver(&msg, self.settings.clone()).await?;
 
         if text.split_ascii_whitespace().any(|w| w == self.settings.nickname) {
             self.message(&dst, &nag_user(&msg.get_nick())).await?;
         }
 
-        spawn(youtube_title(dst.clone(), text.clone(), send.clone()));
+        spawn(youtube_title(dst.clone(), text.clone(), send.clone(), self.settings.clone()));
 
         if text.starts_with('!') && text.len() > 1 && text.as_bytes()[1].is_ascii_alphanumeric() {
             let textv = text.split_ascii_whitespace().collect::<Vec<_>>();
@@ -732,11 +677,11 @@ impl<'a> Client<'a> {
     }
 }
 
-pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<ClientCommand>, control_send: Sender<ControlCommand>, settings: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<ClientCommand>, control_send: Sender<ControlCommand>, settings: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
     let mut line = String::with_capacity(1024);
 
-    let client = Client {startup: Instant::now(), settings: &settings, send: send.clone()};
+    let client = Client {startup: Instant::now(), settings: settings.clone(), send: send.clone()};
 
     loop {
         tokio::select! {

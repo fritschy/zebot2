@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::sync::Arc;
 
 use clap::Parser;
 use tokio::spawn;
@@ -41,6 +42,21 @@ struct Settings {
     extra_opts: Vec<String>,
 }
 
+impl Settings {
+    fn get_extra(&self, key: &str) -> Option<&str> {
+        self.extra_opts
+            .iter()
+            .filter_map(|e|
+                e
+                    .strip_prefix(key)
+                    .map(|x|
+                        x
+                            .strip_prefix('='))
+                    .flatten())
+            .next()
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let my_subscriber = tracing_subscriber::FmtSubscriber::builder()
@@ -52,6 +68,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .expect("setting tracing default failed");
 
     let args = Settings::parse();
+    let args = Arc::new(args);
 
     info!("This is ZeBot2 {}", util::zebot_version());
 

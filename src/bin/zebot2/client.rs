@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::io;
 use std::net::{ToSocketAddrs};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -56,7 +57,7 @@ async fn sock_send<T: AsyncWriteExt + Unpin>(sock: &mut T, rate_limit: &mut leak
     Ok(sock.write_all(data.as_bytes()).await?)
 }
 
-pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<ControlCommand>, settings: Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<ControlCommand>, settings: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut sock = connect_tls(&settings).await?;
 
     let mut buf = vec![0u8; 1 << 16];
