@@ -12,6 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::spawn;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -119,17 +120,28 @@ async fn callout(
             send: Sender<ControlCommand>,
         ) -> Result<(), Box<dyn Error + Send + Sync>> {
             let s = Instant::now();
-            let cmd = Command::new("/usr/bin/timeout")
-                .arg("30s")
-                .arg(path)
-                .args(&args)
-                .output()
-                .await;
+            let cmd = timeout(
+                Duration::from_secs(30),
+                Command::new(path).args(&args).output(),
+            )
+            .await;
+
             let s = s.elapsed();
 
-            info!("Handler {} completed in {:?}", command, s);
-
             let dst = msg.get_reponse_destination(&settings.channels);
+
+            if let Err(e) = cmd {
+                info!("Handler timed out: {e:}");
+                send.send(ControlCommand::TaskMessage(
+                    dst,
+                    "Handler timed out".to_string(),
+                ))
+                .await?;
+                return Ok(());
+            }
+            let cmd = cmd.unwrap();
+
+            info!("Handler {} completed in {:?}", command, s);
 
             match cmd {
                 Ok(p) => {
@@ -405,42 +417,43 @@ impl Control {
         match cmd {
             "!up" | "!uptime" => return_if_handled!(self.handle_command_uptime(dst).await?),
             "!ver" | "!version" => {
-                self
-                    .message(
-                        dst,
-                        &format!("I am {} version {}, let's not talk about it!", env!("CARGO_PKG_NAME"), zebot_version()),
-                    )
+                self.message(
+                    dst,
+                    &format!(
+                        "I am {} version {}, let's not talk about it!",
+                        env!("CARGO_PKG_NAME"),
+                        zebot_version()
+                    ),
+                )
+                .await
+                .map(|_| HandlerResult::Handled)?;
+                return Ok(HandlerResult::Handled);
+            }
+            "!nag" => {
+                self.message(dst, &nag_user(&msg.get_nick()))
                     .await
                     .map(|_| HandlerResult::Handled)?;
                 return Ok(HandlerResult::Handled);
             }
-            "!nag" => return_if_handled!(self
-                .message(dst, &nag_user(&msg.get_nick()))
-                .await
-                .map(|_| HandlerResult::Handled)?),
             "!echo" => {
                 let m = &msg.params[1];
                 if m.len() > 6 {
                     let m = &m[6..];
                     if !m.is_empty() {
-                        return_if_handled!(self
-                            .message(dst, m)
-                            .await
-                            .map(|_| HandlerResult::Handled)?);
+                        self.message(dst, m).await.map(|_| HandlerResult::Handled)?;
+                        return Ok(HandlerResult::Handled);
                     }
                 }
             }
             "!exec" | "!sh" | "!shell" | "!powershell" | "!power-shell" => {
                 let m = format!("Na aber wer wird denn gleich, {}", msg.get_nick());
-                return_if_handled!(self
-                    .message(dst, &m)
+                self.message(dst, &m)
                     .await
-                    .map(|_| HandlerResult::Handled)?);
+                    .map(|_| HandlerResult::Handled)?;
+                return Ok(HandlerResult::Handled);
             }
             _ => {
-                return_if_handled!(
-                    callout(msg.clone(), self.settings.clone(), send.clone()).await?
-                );
+                return_if_handled!(callout(msg.clone(), self.settings.clone(), send.clone()).await?)
             }
         }
 
