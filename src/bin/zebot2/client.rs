@@ -80,10 +80,10 @@ pub(crate) async fn task(
     let mut retries = 5;
 
     let mut send_rate_limit = leaky_bucket_lite::LeakyBucket::builder()
-        .max(256)
+        .max(384)
         .refill_amount(16)
         .refill_interval(Duration::from_millis(333))
-        .tokens(256)
+        .tokens(384)
         .build();
 
     while retries > 0 {
