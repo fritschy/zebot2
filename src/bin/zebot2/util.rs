@@ -89,3 +89,14 @@ pub(crate) fn parse_substitution(re: &str) -> Option<(String, String, String)> {
 
     Some((pat, subst, flags))
 }
+
+pub fn zebot_version() -> String {
+    // See build.rs
+    let rev_info = env!("GIT_REV_INFO");
+    let pkg_ver = env!("CARGO_PKG_VERSION");
+    if rev_info != "0" {
+        format!("{} {}", pkg_ver, rev_info)
+    } else {
+        pkg_ver.to_string()
+    }
+}

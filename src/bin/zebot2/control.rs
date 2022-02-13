@@ -23,7 +23,7 @@ use url::Url;
 
 use crate::Settings;
 use crate::client::{ClientCommand};
-use crate::util::{is_json_flag_set, text_box};
+use crate::util::{is_json_flag_set, text_box, zebot_version};
 
 #[derive(Debug)]
 pub(crate) enum ControlCommand {
@@ -638,6 +638,8 @@ impl<'a> Client<'a> {
     async fn handle_zebot_command(&self, msg: &Message, dst: &str, cmd: &str, args: &[&str], send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
         match cmd {
             "!up" | "!uptime" => self.handle_command_uptime(dst).await?,
+            "!nag" => self.message(dst, &nag_user(dst)).await?,
+            "!ver" | "!version" => self.message(dst, &format!("I am version {}, let's not talk about it!", zebot_version())).await?,
             _ => {
                 callout(msg.clone(), self.settings.clone(), send.clone()).await?;
             },
@@ -664,6 +666,10 @@ impl<'a> Client<'a> {
         let text = &args[1];
 
         url_saver(&msg, &self.settings).await?;
+
+        if text.split_ascii_whitespace().any(|w| w == self.settings.nickname) {
+            self.message(&dst, &nag_user(&msg.get_nick())).await?;
+        }
 
         spawn(youtube_title(dst.clone(), text.clone(), send.clone()));
 

@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let args = Settings::parse();
 
-    info!("Args: {args:#?}");
+    info!("This is ZeBot2 {}", util::zebot_version());
 
     let (control_send, client_recv) = channel(16);
     let (client_send, control_recv) = channel(16);
