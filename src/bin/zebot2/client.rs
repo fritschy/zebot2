@@ -5,10 +5,11 @@ use std::io;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
+use crate::readerbuf::ReaderBuf;
 
 #[derive(Debug)]
 pub(crate) enum ClientCommand {
@@ -74,9 +75,8 @@ pub(crate) async fn task(
     settings: Arc<Settings>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut sock = connect_tls(&settings).await?;
+    let mut bufs = ReaderBuf::new();
 
-    let mut buf = vec![0u8; 1 << 16];
-    let mut off = 0;
     let mut retries = 5;
 
     let mut send_rate_limit = leaky_bucket_lite::LeakyBucket::builder()
@@ -121,7 +121,7 @@ pub(crate) async fn task(
                 }
             }
 
-            n = tokio::time::timeout(Duration::from_secs(settings.server_timeout), sock.read(&mut buf[off ..])) => {
+            n = tokio::time::timeout(Duration::from_secs(settings.server_timeout), bufs.read_from(&mut sock)) => {
                 let n = match n {
                     Err(_) => {
                         send.send(ControlCommand::ServerQuit("timeout".to_string())).await?;
@@ -137,8 +137,7 @@ pub(crate) async fn task(
 
                 retries = 5;
 
-                let mut i = &buf[..off + n];
-                let pos = 0;
+                let mut i = &bufs.buf[..n];
 
                 while !i.is_empty() && i != b"\r\n" {
                     match irc2::parse(i) {
@@ -174,21 +173,13 @@ pub(crate) async fn task(
 
                         // Input ended, no remaining bytes, just continue as normal
                         Err(e) if e.is_incomplete() => {
-                            use nom::Offset;
                             info!("Need to read more, irc2::parse: {:?}", e);
-                            let l = i.len();
-                            let pos = buf.as_slice().offset(i);
-                            dbg!(l, pos);
-                            buf.copy_within(pos..pos+l, 0);
-                            off = pos + l;
+                            bufs.push_to_last(i);
                             break;
                         }
 
-                        Err(e) => {
-                            error!("Error from parser: {:?}", e);
-                            let l = i.len();
-                            off = pos + l;
-                            buf.copy_within(pos..pos+l, 0);
+                        _ => {
+                            bufs.push_to_last(i);
                             break;
                         }
                     }
