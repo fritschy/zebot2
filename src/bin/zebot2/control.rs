@@ -40,17 +40,22 @@ async fn url_saver(
 
     for word in msg.params[1].split_ascii_whitespace() {
         if let Ok(url) = Url::parse(word) {
-            let nick = msg.get_nick();
-            let chan = msg.get_reponse_destination(&settings.channels);
-            info!("Got an url from {} {}: {}", &chan, &nick, url);
-            let line = format!(
-                "{}\t{}\t{}\t{}\n",
-                Local::now().to_rfc3339(),
-                chan,
-                nick,
-                url
-            );
-            f.write_all(line.as_bytes()).await?;
+            match url.scheme() {
+                "ssh" | "sftp" | "davs" | "smb" | "cifs" | "http" | "https" | "ftp" | "ftps" => {
+                    let nick = msg.get_nick();
+                    let chan = msg.get_reponse_destination(&settings.channels);
+                    info!("Got an url from {} {}: {}", &chan, &nick, url);
+                    let line = format!(
+                        "{}\t{}\t{}\t{}\n",
+                        Local::now().to_rfc3339(),
+                        chan,
+                        nick,
+                        url
+                    );
+                    f.write_all(line.as_bytes()).await?;
+                }
+                _ => (),
+            }
         }
     }
 
