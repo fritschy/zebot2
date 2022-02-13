@@ -1,15 +1,15 @@
 use crate::control::ControlCommand;
+use crate::readerbuf::ReaderBuf;
 use crate::Settings;
 use std::error::Error;
 use std::io;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, info};
-use crate::readerbuf::ReaderBuf;
 
 #[derive(Debug)]
 pub(crate) enum ClientCommand {

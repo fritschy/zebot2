@@ -36,12 +36,13 @@ impl ReaderBuf {
         l[..len].copy_from_slice(i);
     }
 
-    pub(crate) async fn read_from(&mut self, source: &mut TlsStream<TcpStream>) -> Result<usize, std::io::Error> {
+    pub(crate) async fn read_from(
+        &mut self,
+        source: &mut TlsStream<TcpStream>,
+    ) -> Result<usize, std::io::Error> {
         let off = self.fill_from_last();
 
-        let bytes = source
-            .read(&mut self.buf.as_mut_slice()[off..])
-            .await?;
+        let bytes = source.read(&mut self.buf.as_mut_slice()[off..]).await?;
 
         if bytes == 0 {
             Err(std::io::Error::new(
@@ -53,4 +54,3 @@ impl ReaderBuf {
         }
     }
 }
-

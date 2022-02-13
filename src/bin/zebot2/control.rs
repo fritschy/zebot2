@@ -105,7 +105,14 @@ async fn callout(
     dbg!(&args);
 
     spawn(async move {
-        async fn wrapper(msg: Message, command: String, path: String, args: Vec<String>, settings: Arc<Settings>, send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
+        async fn wrapper(
+            msg: Message,
+            command: String,
+            path: String,
+            args: Vec<String>,
+            settings: Arc<Settings>,
+            send: Sender<ControlCommand>,
+        ) -> Result<(), Box<dyn Error + Send + Sync>> {
             let s = Instant::now();
             let cmd = Command::new("/usr/bin/timeout")
                 .arg("30s")
@@ -190,7 +197,9 @@ async fn callout(
                                             .subsequent_indent("  ");
                                         for l in lines {
                                             new_lines.extend(
-                                                textwrap::wrap(&l, &opt).iter().map(|x| x.to_string()),
+                                                textwrap::wrap(&l, &opt)
+                                                    .iter()
+                                                    .map(|x| x.to_string()),
                                             );
                                         }
                                         new_lines
@@ -208,7 +217,8 @@ async fn callout(
                                     };
 
                                     for i in text_box(lines.iter(), response["title"].as_str()) {
-                                        send.send(ControlCommand::TaskMessage(dst.clone(), i)).await?;
+                                        send.send(ControlCommand::TaskMessage(dst.clone(), i))
+                                            .await?;
                                     }
                                 }
                             }
@@ -216,9 +226,9 @@ async fn callout(
                             Err(e) => {
                                 // Perhaps have this as a fallback for non-json handlers? What could possibly go wrong!
                                 error!(
-                                "Could not parse json from handler {}: {}",
-                                command, response
-                            );
+                                    "Could not parse json from handler {}: {}",
+                                    command, response
+                                );
                                 error!("Error: {:?}", e);
                             }
                         }

@@ -8,8 +8,8 @@ use tracing::info;
 
 mod client;
 mod control;
-mod util;
 mod readerbuf;
+mod util;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
