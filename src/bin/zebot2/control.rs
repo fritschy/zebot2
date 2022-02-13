@@ -471,7 +471,7 @@ impl Control {
             self.zebot_answer(msg, &msg.get_nick(), &dst).await?;
         }
 
-        url_saver(&msg, self.settings.clone()).await?;
+        url_saver(msg, self.settings.clone()).await?;
 
         if text
             .split_ascii_whitespace()
