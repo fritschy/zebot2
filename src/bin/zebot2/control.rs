@@ -108,7 +108,7 @@ async fn callout(
     //   "link": "string"             # optional
     // }
 
-    dbg!(&args);
+    info!("callout args={args:?}");
 
     spawn(async move {
         async fn wrapper(
@@ -131,7 +131,7 @@ async fn callout(
             let dst = msg.get_reponse_destination(&settings.channels);
 
             if let Err(e) = cmd {
-                info!("Handler timed out: {e:}");
+                warn!("Handler timed out: {e:}");
                 send.send(ControlCommand::TaskMessage(
                     dst,
                     "Handler timed out".to_string(),
@@ -147,7 +147,7 @@ async fn callout(
                 Ok(p) => {
                     if !p.status.success() {
                         error!("Handler failed with code {}", p.status.code().unwrap());
-                        dbg!(&p);
+                        debug!("Handler output={p:?}");
                         send.send(ControlCommand::TaskMessage(
                             dst,
                             "Somehow, that did not work...".to_string(),
@@ -157,7 +157,6 @@ async fn callout(
                     }
 
                     if let Ok(response) = String::from_utf8(p.stdout) {
-                        dbg!(&response);
                         match json::parse(&response) {
                             Ok(response) => {
                                 let dst = if response.contains("dst") {
@@ -166,8 +165,9 @@ async fn callout(
                                     dst
                                 };
 
+                                debug!("Response={response:?}");
+
                                 if response.contains("error") {
-                                    dbg!(&response);
                                     send.send(ControlCommand::TaskMessage(
                                         dst,
                                         "Somehow, that did not work...".to_string(),
