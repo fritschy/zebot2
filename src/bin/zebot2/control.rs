@@ -272,14 +272,16 @@ async fn youtube_title(
     {
         if yt_re.is_match(url) {
             let mut cmd_builder = Command::new("python3");
-            if let Some(youtube_dl_dir) = settings.get_extra("youtube_dl") {
+            if let Some(youtube_dl_dir) = settings.get_extra("youtube_dl_dir") {
                 cmd_builder.current_dir(youtube_dl_dir);
             }
+
+            let module = settings.get_extra("youtube_dl_module").unwrap_or("youtube_dl");
 
             if let Ok(output) = cmd_builder
                 .args(&[
                     "-m",
-                    "yt_dlp",
+                    module,
                     "--quiet",
                     "--get-title",
                     "--socket-timeout",
@@ -553,11 +555,13 @@ impl Control {
             CommandCode::PrivMsg => self.handle_privmsg(msg, answer.clone()).await?,
 
             CommandCode::Join => {
-                self.message(
-                    &msg.get_reponse_destination(&self.settings.channels),
-                    &greet(&msg.get_nick()),
-                )
-                .await?
+                if msg.get_nick() != self.settings.nickname {
+                    self.message(
+                        &msg.get_reponse_destination(&self.settings.channels),
+                        &greet(&msg.get_nick()),
+                    )
+                        .await?
+                }
             }
 
             _ => {
