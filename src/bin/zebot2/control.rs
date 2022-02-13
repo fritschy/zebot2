@@ -12,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::spawn;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::client::ClientCommand;
@@ -129,10 +129,11 @@ async fn callout(
 
             info!("Handler {} completed in {:?}", command, s);
 
+            let dst = msg.get_reponse_destination(&settings.channels);
+
             match cmd {
                 Ok(p) => {
                     if !p.status.success() {
-                        let dst = msg.get_reponse_destination(&settings.channels);
                         error!("Handler failed with code {}", p.status.code().unwrap());
                         dbg!(&p);
                         send.send(ControlCommand::TaskMessage(
@@ -150,7 +151,7 @@ async fn callout(
                                 let dst = if response.contains("dst") {
                                     response["dst"].to_string()
                                 } else {
-                                    msg.get_reponse_destination(&settings.channels)
+                                    dst
                                 };
 
                                 if response.contains("error") {
@@ -524,10 +525,7 @@ impl Control {
                 (c.is_whitespace() || c.is_ascii_punctuation())
                     && !self.settings.nickname.contains(c)
             })
-            .any(|w| {
-                info!("split, w={w}");
-                w == self.settings.nickname
-            })
+            .any(|w| w == self.settings.nickname)
         {
             return_if_handled!(self.zebot_answer(msg, &msg.get_nick(), &dst).await?);
         }
@@ -704,6 +702,8 @@ pub(crate) async fn task(
         last_msg: Default::default(),
         last: Default::default(),
     };
+
+    debug!("settings={settings:#?}");
 
     loop {
         tokio::select! {
