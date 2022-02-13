@@ -1,5 +1,9 @@
 use std::fmt::Display;
+use std::io;
+use std::io::{BufRead, BufReader};
 use json::JsonValue;
+use rand::prelude::IteratorRandom;
+use rand::thread_rng;
 use tracing::error;
 
 pub(crate) fn text_box<T: Display, S: Display>(
@@ -99,4 +103,46 @@ pub fn zebot_version() -> String {
     } else {
         pkg_ver.to_string()
     }
+}
+
+pub(crate) fn greet(nick: &str) -> String {
+    const PATS: &[&str] = &[
+        "Hey {}!",
+        "Moin {}, o/",
+        "Moin {}, \\o",
+        "Moin {}, \\o/",
+        "Moin {}, _o/",
+        "Moin {}, \\o_",
+        "Moin {}, o_/",
+        "OI, Ein {}!",
+        "{}, n'Moin!",
+        "{}, grüß Gott, äh - Zeus! Was gibt's denn Neu's?",
+    ];
+
+    if let Some(s) = PATS.iter().choose(&mut thread_rng()) {
+        return s.to_string().replace("{}", nick);
+    }
+
+    String::from("Hey ") + nick
+}
+
+pub(crate) fn nag_user(nick: &str) -> String {
+    fn doit(nick: &str) -> Result<String, io::Error> {
+        let nick = nick.replace(|x: char| !x.is_alphanumeric(), "_");
+        let nag_file = format!("nag-{}.txt", nick);
+        let f = std::fs::File::open(&nag_file).map_err(|e| {
+            error!("Could not open nag-file '{}'", &nag_file);
+            e
+        })?;
+        let br = BufReader::new(f);
+        let l = br.lines();
+        let m = l
+            .choose(&mut thread_rng())
+            .unwrap_or_else(|| Ok("...".to_string()))?;
+        Ok(format!("Hey {}, {}", nick, m))
+    }
+
+    doit(nick).unwrap_or_else(|_| {
+        format!("Hey {}", nick)
+    })
 }

@@ -1,7 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::io;
-use std::io::BufReader;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -9,7 +7,6 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tracing::{error, info, warn};
 use rand::prelude::*;
-use std::io::BufRead;
 use std::path::Path;
 use chrono::{Local};
 use irc2::{Message, Prefix};
@@ -20,7 +17,7 @@ use url::Url;
 
 use crate::Settings;
 use crate::client::{ClientCommand};
-use crate::util::{is_json_flag_set, parse_substitution, text_box, zebot_version};
+use crate::util::{greet, is_json_flag_set, nag_user, parse_substitution, text_box, zebot_version};
 
 #[derive(Debug)]
 pub(crate) enum ControlCommand {
@@ -232,48 +229,6 @@ async fn callout(msg: irc2::Message, settings: Arc<Settings>, send: Sender<Contr
     Ok(HandlerResult::Handled)
 }
 
-fn greet(nick: &str) -> String {
-    const PATS: &[&str] = &[
-        "Hey {}!",
-        "Moin {}, o/",
-        "Moin {}, \\o",
-        "Moin {}, \\o/",
-        "Moin {}, _o/",
-        "Moin {}, \\o_",
-        "Moin {}, o_/",
-        "OI, Ein {}!",
-        "{}, n'Moin!",
-        "{}, grüß Gott, äh - Zeus! Was gibt's denn Neu's?",
-    ];
-
-    if let Some(s) = PATS.iter().choose(&mut thread_rng()) {
-        return s.to_string().replace("{}", nick);
-    }
-
-    String::from("Hey ") + nick
-}
-
-fn nag_user(nick: &str) -> String {
-    fn doit(nick: &str) -> Result<String, io::Error> {
-        let nick = nick.replace(|x: char| !x.is_alphanumeric(), "_");
-        let nag_file = format!("nag-{}.txt", nick);
-        let f = std::fs::File::open(&nag_file).map_err(|e| {
-            error!("Could not open nag-file '{}'", &nag_file);
-            e
-        })?;
-        let br = BufReader::new(f);
-        let l = br.lines();
-        let m = l
-            .choose(&mut thread_rng())
-            .unwrap_or_else(|| Ok("...".to_string()))?;
-        Ok(format!("Hey {}, {}", nick, m))
-    }
-
-    doit(nick).unwrap_or_else(|_| {
-        format!("Hey {}", nick)
-    })
-}
-
 async fn youtube_title(dst: String, text: String, send: Sender<ControlCommand>, settings: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let yt_re = regex::Regex::new(r"https?://((www.)?youtube\.com/watch|youtu.be/)").unwrap();
     for url in text
@@ -425,7 +380,7 @@ impl Client {
 
         spawn(youtube_title(dst.clone(), text.clone(), send.clone(), self.settings.clone()));
 
-        self.substitute_handler(msg).await?;
+        self.handle_substitute_command(msg).await?;
 
         if text.starts_with('!') && text.len() > 1 && text.as_bytes()[1].is_ascii_alphanumeric() {
             let textv = text.split_ascii_whitespace().collect::<Vec<_>>();
@@ -483,7 +438,7 @@ impl Client {
         Ok(())
     }
 
-    async fn substitute_handler(&mut self, msg: &Message) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_substitute_command(&mut self, msg: &Message) -> Result<(), Box<dyn Error + Send + Sync>> {
         let nick = msg.get_nick();
         let dst = msg.get_reponse_destination(&self.settings.channels);
 
