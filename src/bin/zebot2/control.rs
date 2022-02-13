@@ -405,13 +405,14 @@ impl Control {
         match cmd {
             "!up" | "!uptime" => return_if_handled!(self.handle_command_uptime(dst).await?),
             "!ver" | "!version" => {
-                return_if_handled!(self
+                self
                     .message(
                         dst,
-                        &format!("I am version {}, let's not talk about it!", zebot_version()),
+                        &format!("I am {} version {}, let's not talk about it!", env!("CARGO_PKG_NAME"), zebot_version()),
                     )
                     .await
-                    .map(|_| HandlerResult::Handled)?);
+                    .map(|_| HandlerResult::Handled)?;
+                return Ok(HandlerResult::Handled);
             }
             "!nag" => return_if_handled!(self
                 .message(dst, &nag_user(&msg.get_nick()))
