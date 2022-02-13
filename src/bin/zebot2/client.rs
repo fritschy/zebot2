@@ -139,7 +139,7 @@ pub(crate) async fn task(
 
                 let mut i = &bufs.buf[..n];
 
-                while !i.is_empty() && i != b"\r\n" {
+                while !i.is_empty() {
                     match irc2::parse(i) {
                         Ok((r, msg)) => {
                             i = r;
@@ -168,12 +168,12 @@ pub(crate) async fn task(
                                 _ => (),
                             }
 
+                            // Forward IRC message to control for handling
                             send.send(ControlCommand::Irc(msg.clone())).await?;
                         }
 
                         // Input ended, no remaining bytes, just continue as normal
                         Err(e) if e.is_incomplete() => {
-                            info!("Need to read more, irc2::parse: {:?}", e);
                             bufs.push_to_last(i);
                             break;
                         }

@@ -66,9 +66,9 @@ async fn callout(
     msg: irc2::Message,
     settings: Arc<Settings>,
     send: Sender<ControlCommand>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
     if msg.params.len() < 2 || !msg.params[1].starts_with('!') {
-        return Ok(());
+        return Ok(HandlerResult::NotInterested);
     }
 
     let command = msg.params[1][1..]
@@ -79,7 +79,7 @@ async fn callout(
         .chars()
         .all(|x| x.is_ascii_alphanumeric() || x == '-' || x == '_')
     {
-        return Ok(());
+        return Ok(HandlerResult::NotInterested);
     }
 
     let command = command.to_lowercase();
@@ -87,7 +87,7 @@ async fn callout(
     let path = format!("./handlers/{}", command);
 
     if !Path::new(&path).exists() {
-        return Ok(());
+        return Ok(HandlerResult::NotInterested);
     }
 
     let nick = msg.get_nick();
@@ -256,7 +256,7 @@ async fn callout(
         }
     });
 
-    Ok(())
+    Ok(HandlerResult::Handled)
 }
 
 async fn youtube_title(
@@ -276,7 +276,9 @@ async fn youtube_title(
                 cmd_builder.current_dir(youtube_dl_dir);
             }
 
-            let module = settings.get_extra("youtube_dl_module").unwrap_or("youtube_dl");
+            let module = settings
+                .get_extra("youtube_dl_module")
+                .unwrap_or("youtube_dl");
 
             if let Ok(output) = cmd_builder
                 .args(&[
@@ -318,6 +320,20 @@ async fn youtube_title(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum HandlerResult {
+    Handled,
+    NotInterested,
+}
+
+macro_rules! return_if_handled {
+    ($e: expr) => {
+        if $e == HandlerResult::Handled {
+            return Ok(HandlerResult::Handled);
+        }
+    };
+}
+
 #[derive(Debug)]
 pub(crate) enum ControlCommand {
     Irc(irc2::Message),
@@ -343,7 +359,10 @@ impl Control {
         Ok(())
     }
 
-    async fn handle_command_uptime(&self, dst: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_command_uptime(
+        &self,
+        dst: &str,
+    ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
         let mut u = self.startup.elapsed().as_secs();
         let mut r = String::new();
 
@@ -369,7 +388,7 @@ impl Control {
 
         self.message(dst, &r).await?;
 
-        Ok(())
+        Ok(HandlerResult::Handled)
     }
 
     async fn handle_zebot_command(
@@ -379,37 +398,51 @@ impl Control {
         cmd: &str,
         _args: &[&str],
         send: Sender<ControlCommand>,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
         let cmd = cmd.split_ascii_whitespace().next().unwrap_or("");
 
         match cmd {
-            "!up" | "!uptime" => self.handle_command_uptime(dst).await?,
+            "!up" | "!uptime" => return_if_handled!(self.handle_command_uptime(dst).await?),
             "!ver" | "!version" => {
-                self.message(
-                    dst,
-                    &format!("I am version {}, let's not talk about it!", zebot_version()),
-                )
-                .await?
+                return_if_handled!(self
+                    .message(
+                        dst,
+                        &format!("I am version {}, let's not talk about it!", zebot_version()),
+                    )
+                    .await
+                    .map(|_| HandlerResult::Handled)?);
             }
-            "!nag" => self.message(dst, &nag_user(&msg.get_nick())).await?,
+            "!nag" => return_if_handled!(self
+                .message(dst, &nag_user(&msg.get_nick()))
+                .await
+                .map(|_| HandlerResult::Handled)?),
             "!echo" => {
                 let m = &msg.params[1];
                 if m.len() > 6 {
                     let m = &m[6..];
                     if !m.is_empty() {
-                        self.message(dst, m).await?;
+                        return_if_handled!(self
+                            .message(dst, m)
+                            .await
+                            .map(|_| HandlerResult::Handled)?);
                     }
                 }
             }
             "!exec" | "!sh" | "!shell" | "!powershell" | "!power-shell" => {
                 let m = format!("Na aber wer wird denn gleich, {}", msg.get_nick());
-                self.message(dst, &m).await?;
+                return_if_handled!(self
+                    .message(dst, &m)
+                    .await
+                    .map(|_| HandlerResult::Handled)?);
             }
             _ => {
-                callout(msg.clone(), self.settings.clone(), send.clone()).await?;
+                return_if_handled!(
+                    callout(msg.clone(), self.settings.clone(), send.clone()).await?
+                );
             }
         }
-        Ok(())
+
+        Ok(HandlerResult::NotInterested)
     }
 
     async fn zebot_answer(
@@ -417,7 +450,7 @@ impl Control {
         msg: &irc2::Message,
         _nick: &str,
         dst: &str,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
         let now = Instant::now();
         let last = &mut self.last;
         let pfx = msg.prefix.as_ref().unwrap();
@@ -425,7 +458,7 @@ impl Control {
             let last_ts = *last.get(pfx).unwrap();
             last.entry(pfx.clone()).and_modify(|x| *x = now);
             if now.duration_since(last_ts) < Duration::from_secs(2) {
-                return Ok(());
+                return Ok(HandlerResult::NotInterested);
             }
         } else {
             last.entry(pfx.clone()).or_insert_with(|| now);
@@ -442,18 +475,18 @@ impl Control {
             .send(ClientCommand::Message(dst.to_string(), m))
             .await?;
 
-        Ok(())
+        Ok(HandlerResult::Handled)
     }
 
     async fn handle_privmsg(
         &mut self,
         msg: &irc2::Message,
         send: Sender<ControlCommand>,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
         let cmd = &msg.command;
 
         if cmd != &CommandCode::PrivMsg {
-            return Ok(());
+            return Ok(HandlerResult::NotInterested);
         }
 
         let args = &msg.params;
@@ -462,23 +495,12 @@ impl Control {
 
         if argc < 2 || args[1].is_empty() {
             warn!("Improper PRIVMSG: {}", msg);
-            return Ok(());
+            return Ok(HandlerResult::NotInterested);
         }
 
         let text = &args[1];
 
-        if text.to_lowercase().contains(&self.settings.nickname) {
-            self.zebot_answer(msg, &msg.get_nick(), &dst).await?;
-        }
-
         url_saver(msg, self.settings.clone()).await?;
-
-        if text
-            .split_ascii_whitespace()
-            .any(|w| w == self.settings.nickname)
-        {
-            self.message(&dst, &nag_user(&msg.get_nick())).await?;
-        }
 
         spawn(youtube_title(
             dst.clone(),
@@ -487,18 +509,26 @@ impl Control {
             self.settings.clone(),
         ));
 
-        self.handle_substitute_command(msg).await?;
+        return_if_handled!(self.handle_substitute_command(msg).await?);
 
         if text.starts_with('!') && text.len() > 1 && text.as_bytes()[1].is_ascii_alphanumeric() {
             let textv = text.split_ascii_whitespace().collect::<Vec<_>>();
-            self.handle_zebot_command(msg, &dst, text.as_str(), &textv[1..], send.clone())
-                .await?;
-            return Ok(());
+            return_if_handled!(
+                self.handle_zebot_command(msg, &dst, text.as_str(), &textv[1..], send.clone())
+                    .await?
+            );
+        }
+
+        if text
+            .split_ascii_whitespace()
+            .any(|w| w == self.settings.nickname)
+        {
+            return_if_handled!(self.zebot_answer(msg, &msg.get_nick(), &dst).await?);
         }
 
         info!("{}", msg);
 
-        Ok(())
+        Ok(HandlerResult::NotInterested)
     }
 
     async fn logon(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -552,7 +582,7 @@ impl Control {
                 self.logon().await?
             }
 
-            CommandCode::PrivMsg => self.handle_privmsg(msg, answer.clone()).await?,
+            CommandCode::PrivMsg => self.handle_privmsg(msg, answer.clone()).await.map(|_| ())?,
 
             CommandCode::Join => {
                 if msg.get_nick() != self.settings.nickname {
@@ -560,7 +590,7 @@ impl Control {
                         &msg.get_reponse_destination(&self.settings.channels),
                         &greet(&msg.get_nick()),
                     )
-                        .await?
+                    .await?
                 }
             }
 
@@ -575,17 +605,17 @@ impl Control {
     async fn handle_substitute_command(
         &mut self,
         msg: &Message,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
         let nick = msg.get_nick();
         let dst = msg.get_reponse_destination(&self.settings.channels);
 
         if !msg.params[1].starts_with("!s") && !msg.params[1].starts_with("!S") {
             if msg.params[1].starts_with("\x01ACTION") {
                 error!("Ignoring ACTION message");
-                return Ok(());
+                return Ok(HandlerResult::NotInterested);
             }
             self.last_msg.insert((dst, nick), msg.params[1].clone());
-            return Ok(());
+            return Ok(HandlerResult::NotInterested);
         }
 
         let re = &msg.params[1][1..];
@@ -600,7 +630,7 @@ impl Control {
                     "Could not parse substitution".to_string(),
                 ))
                 .await?;
-            return Ok(());
+            return Ok(HandlerResult::NotInterested);
         };
 
         let (flags, _save_subst) = if flags.contains('s') {
@@ -644,11 +674,11 @@ impl Control {
                         "Could not parse regex".to_string(),
                     ))
                     .await?;
-                return Ok(());
+                return Ok(HandlerResult::NotInterested);
             }
         }
 
-        Ok(())
+        Ok(HandlerResult::Handled)
     }
 }
 
