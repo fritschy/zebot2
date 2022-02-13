@@ -1,23 +1,23 @@
+use chrono::Local;
+use irc2::command::CommandCode;
+use irc2::{Message, Prefix};
+use rand::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::{Receiver, Sender};
+use textwrap::word_splitters::NoHyphenation;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use tracing::{error, info, warn};
-use rand::prelude::*;
-use std::path::Path;
-use chrono::{Local};
-use irc2::{Message, Prefix};
-use irc2::command::CommandCode;
-use textwrap::word_splitters::NoHyphenation;
 use tokio::spawn;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{error, info, warn};
 use url::Url;
 
-use crate::Settings;
-use crate::client::{ClientCommand};
+use crate::client::ClientCommand;
 use crate::util::{greet, is_json_flag_set, nag_user, parse_substitution, text_box, zebot_version};
+use crate::Settings;
 
 #[derive(Debug)]
 pub(crate) enum ControlCommand {
@@ -36,7 +36,10 @@ struct Client {
     last: HashMap<Prefix, Instant>,
 }
 
-async fn url_saver(msg: &irc2::Message, settings: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn url_saver(
+    msg: &irc2::Message,
+    settings: Arc<Settings>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut filename = settings.get_extra("url_store").unwrap_or("").to_string();
 
     if filename.is_empty() {
@@ -49,14 +52,21 @@ async fn url_saver(msg: &irc2::Message, settings: Arc<Settings>) -> Result<(), B
         .write(true)
         .read(false)
         .append(true)
-        .open(&filename).await?;
+        .open(&filename)
+        .await?;
 
     for word in msg.params[1].split_ascii_whitespace() {
         if let Ok(url) = Url::parse(word) {
             let nick = msg.get_nick();
             let chan = msg.get_reponse_destination(&settings.channels);
             info!("Got an url from {} {}: {}", &chan, &nick, url);
-            let line = format!("{}\t{}\t{}\t{}\n", Local::now().to_rfc3339(), chan, nick, url);
+            let line = format!(
+                "{}\t{}\t{}\t{}\n",
+                Local::now().to_rfc3339(),
+                chan,
+                nick,
+                url
+            );
             f.write_all(line.as_bytes()).await?;
         }
     }
@@ -69,7 +79,11 @@ pub enum HandlerResult {
     NotInterested,
 }
 
-async fn callout(msg: irc2::Message, settings: Arc<Settings>, send: Sender<ControlCommand>) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
+async fn callout(
+    msg: irc2::Message,
+    settings: Arc<Settings>,
+    send: Sender<ControlCommand>,
+) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
     if msg.params.len() < 2 || !msg.params[1].starts_with('!') {
         return Ok(HandlerResult::NotInterested);
     }
@@ -114,7 +128,12 @@ async fn callout(msg: irc2::Message, settings: Arc<Settings>, send: Sender<Contr
 
     spawn(async move {
         let s = Instant::now();
-        let cmd = Command::new("/usr/bin/timeout").arg("30s").arg(path).args(&args).output().await;
+        let cmd = Command::new("/usr/bin/timeout")
+            .arg("30s")
+            .arg(path)
+            .args(&args)
+            .output()
+            .await;
         let s = s.elapsed();
 
         info!("Handler {} completed in {:?}", command, s);
@@ -125,7 +144,11 @@ async fn callout(msg: irc2::Message, settings: Arc<Settings>, send: Sender<Contr
                     let dst = msg.get_reponse_destination(&settings.channels);
                     error!("Handler failed with code {}", p.status.code().unwrap());
                     dbg!(&p);
-                    send.send(ControlCommand::TaskMessage(dst, "Somehow, that did not work...".to_string())).await;
+                    send.send(ControlCommand::TaskMessage(
+                        dst,
+                        "Somehow, that did not work...".to_string(),
+                    ))
+                    .await;
                     return;
                 }
 
@@ -141,11 +164,19 @@ async fn callout(msg: irc2::Message, settings: Arc<Settings>, send: Sender<Contr
 
                             if response.contains("error") {
                                 dbg!(&response);
-                                send.send(ControlCommand::TaskMessage(dst, "Somehow, that did not work...".to_string())).await;
+                                send.send(ControlCommand::TaskMessage(
+                                    dst,
+                                    "Somehow, that did not work...".to_string(),
+                                ))
+                                .await;
                                 return;
                             } else if !is_json_flag_set(&response["box"]) {
                                 for l in response["lines"].members() {
-                                    send.send(ControlCommand::TaskMessage(dst.clone(), l.to_string())).await;
+                                    send.send(ControlCommand::TaskMessage(
+                                        dst.clone(),
+                                        l.to_string(),
+                                    ))
+                                    .await;
                                 }
                             } else {
                                 let lines = response["lines"]
@@ -180,9 +211,7 @@ async fn callout(msg: irc2::Message, settings: Arc<Settings>, send: Sender<Contr
                                         .subsequent_indent("  ");
                                     for l in lines {
                                         new_lines.extend(
-                                            textwrap::wrap(&l, &opt)
-                                                .iter()
-                                                .map(|x| x.to_string()),
+                                            textwrap::wrap(&l, &opt).iter().map(|x| x.to_string()),
                                         );
                                     }
                                     new_lines
@@ -229,11 +258,17 @@ async fn callout(msg: irc2::Message, settings: Arc<Settings>, send: Sender<Contr
     Ok(HandlerResult::Handled)
 }
 
-async fn youtube_title(dst: String, text: String, send: Sender<ControlCommand>, settings: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn youtube_title(
+    dst: String,
+    text: String,
+    send: Sender<ControlCommand>,
+    settings: Arc<Settings>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let yt_re = regex::Regex::new(r"https?://((www.)?youtube\.com/watch|youtu.be/)").unwrap();
     for url in text
         .split_ascii_whitespace()
-        .filter(|&x| x.starts_with("https://") || x.starts_with("http://")) {
+        .filter(|&x| x.starts_with("https://") || x.starts_with("http://"))
+    {
         if yt_re.is_match(url) {
             let mut cmd_builder = Command::new("python3");
             if let Some(youtube_dl_dir) = settings.get_extra("youtube_dl") {
@@ -242,17 +277,33 @@ async fn youtube_title(dst: String, text: String, send: Sender<ControlCommand>, 
 
             if let Ok(output) = cmd_builder
                 .args(&[
-                    "-m", "yt_dlp", "--quiet", "--get-title", "--socket-timeout", "15", url,
+                    "-m",
+                    "yt_dlp",
+                    "--quiet",
+                    "--get-title",
+                    "--socket-timeout",
+                    "15",
+                    url,
                 ])
-                .output().await {
+                .output()
+                .await
+            {
                 let err = String::from_utf8_lossy(output.stderr.as_ref());
                 if !err.is_empty() {
                     error!("Got error from youtube-dl: {}", err);
-                    send.send(ControlCommand::TaskMessage(dst.to_string(), format!("Got an error for URL {}, is this a valid video URL?", &url))).await?;
+                    send.send(ControlCommand::TaskMessage(
+                        dst.to_string(),
+                        format!("Got an error for URL {}, is this a valid video URL?", &url),
+                    ))
+                    .await?;
                 } else {
                     let title = String::from_utf8_lossy(output.stdout.as_ref());
                     if !title.is_empty() {
-                        send.send(ControlCommand::TaskMessage(dst.to_string(), format!("{} has title '{}'", &url, title.trim()))).await?;
+                        send.send(ControlCommand::TaskMessage(
+                            dst.to_string(),
+                            format!("{} has title '{}'", &url, title.trim()),
+                        ))
+                        .await?;
                     }
                 }
             }
@@ -266,7 +317,9 @@ async fn youtube_title(dst: String, text: String, send: Sender<ControlCommand>, 
 
 impl Client {
     async fn message(&self, dst: &str, msg: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.send.send(ClientCommand::Message(dst.to_string(), msg.to_string())).await?;
+        self.send
+            .send(ClientCommand::Message(dst.to_string(), msg.to_string()))
+            .await?;
         Ok(())
     }
 
@@ -299,32 +352,52 @@ impl Client {
         Ok(())
     }
 
-    async fn handle_zebot_command(&mut self, msg: &Message, dst: &str, cmd: &str, _args: &[&str], send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_zebot_command(
+        &mut self,
+        msg: &Message,
+        dst: &str,
+        cmd: &str,
+        _args: &[&str],
+        send: Sender<ControlCommand>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         match cmd {
             "!up" | "!uptime" => self.handle_command_uptime(dst).await?,
-            "!ver" | "!version" => self.message(dst, &format!("I am version {}, let's not talk about it!", zebot_version())).await?,
+            "!ver" | "!version" => {
+                self.message(
+                    dst,
+                    &format!("I am version {}, let's not talk about it!", zebot_version()),
+                )
+                .await?
+            }
             "!nag" => self.message(dst, &nag_user(dst)).await?,
             "!echo" => {
                 let m = &msg.params[1];
                 if m.len() > 6 {
                     let m = &m[6..];
                     if !m.is_empty() {
-                        send.send(ControlCommand::TaskMessage(dst.to_string(), m.to_string())).await?;
+                        send.send(ControlCommand::TaskMessage(dst.to_string(), m.to_string()))
+                            .await?;
                     }
                 }
             }
             "!exec" | "!sh" | "!shell" | "!powershell" | "!power-shell" => {
                 let m = format!("Na aber wer wird denn gleich, {}", msg.get_nick());
-                send.send(ControlCommand::TaskMessage(dst.to_string(), m)).await?;
+                send.send(ControlCommand::TaskMessage(dst.to_string(), m))
+                    .await?;
             }
             _ => {
                 callout(msg.clone(), self.settings.clone(), send.clone()).await?;
-            },
+            }
         }
         Ok(())
     }
 
-    async fn zebot_answer(&mut self, msg: &irc2::Message, _nick: &str, dst: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn zebot_answer(
+        &mut self,
+        msg: &irc2::Message,
+        _nick: &str,
+        dst: &str,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let now = Instant::now();
         let last = &mut self.last;
         let pfx = msg.prefix.as_ref().unwrap();
@@ -345,12 +418,18 @@ impl Client {
             format!("Hey {}", &msg.get_nick())
         };
 
-        self.send.send(ClientCommand::Message(dst.to_string(), m)).await?;
+        self.send
+            .send(ClientCommand::Message(dst.to_string(), m))
+            .await?;
 
         Ok(())
     }
 
-    async fn handle_privmsg(&mut self, msg: &irc2::Message, send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_privmsg(
+        &mut self,
+        msg: &irc2::Message,
+        send: Sender<ControlCommand>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let cmd = &msg.command;
 
         if cmd != &CommandCode::PrivMsg {
@@ -374,17 +453,26 @@ impl Client {
 
         url_saver(&msg, self.settings.clone()).await?;
 
-        if text.split_ascii_whitespace().any(|w| w == self.settings.nickname) {
+        if text
+            .split_ascii_whitespace()
+            .any(|w| w == self.settings.nickname)
+        {
             self.message(&dst, &nag_user(&msg.get_nick())).await?;
         }
 
-        spawn(youtube_title(dst.clone(), text.clone(), send.clone(), self.settings.clone()));
+        spawn(youtube_title(
+            dst.clone(),
+            text.clone(),
+            send.clone(),
+            self.settings.clone(),
+        ));
 
         self.handle_substitute_command(msg).await?;
 
         if text.starts_with('!') && text.len() > 1 && text.as_bytes()[1].is_ascii_alphanumeric() {
             let textv = text.split_ascii_whitespace().collect::<Vec<_>>();
-            self.handle_zebot_command(msg, &dst, text.as_str(), &textv[1..], send.clone()).await?;
+            self.handle_zebot_command(msg, &dst, text.as_str(), &textv[1..], send.clone())
+                .await?;
             return Ok(());
         }
 
@@ -394,14 +482,24 @@ impl Client {
     }
 
     async fn logon(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.send.send(ClientCommand::Logon {nick: self.settings.nickname.clone(), realname: self.settings.realname.clone()}).await?;
+        self.send
+            .send(ClientCommand::Logon {
+                nick: self.settings.nickname.clone(),
+                realname: self.settings.realname.clone(),
+            })
+            .await?;
 
         if let Some(pwfile) = &self.settings.password_file {
             match tokio::fs::File::open(&pwfile).await {
                 Ok(mut f) => {
                     let mut pw = String::new();
                     f.read_to_string(&mut pw).await?;
-                    self.send.send(ClientCommand::Message("NickServ".to_string(), format!("identify {}", pw.trim()))).await?;
+                    self.send
+                        .send(ClientCommand::Message(
+                            "NickServ".to_string(),
+                            format!("identify {}", pw.trim()),
+                        ))
+                        .await?;
                 }
                 Err(e) => warn!("Could not open password file {}: {:?}", &pwfile, e),
             }
@@ -415,20 +513,34 @@ impl Client {
         Ok(())
     }
 
-    async fn handle_irc_command(&mut self, msg: &irc2::Message, answer: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_irc_command(
+        &mut self,
+        msg: &irc2::Message,
+        answer: Sender<ControlCommand>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let args = &msg.params;
         let argc = args.len();
         let cmd = &msg.command;
         let pfx = &msg.prefix;
 
         match cmd {
-            CommandCode::Notice if argc == 2
-                && args[1].contains("Checking Ident")
-                && matches!(pfx, Some(irc2::Prefix::Server(_))) => self.logon().await?,
+            CommandCode::Notice
+                if argc == 2
+                    && args[1].contains("Checking Ident")
+                    && matches!(pfx, Some(irc2::Prefix::Server(_))) =>
+            {
+                self.logon().await?
+            }
 
             CommandCode::PrivMsg => self.handle_privmsg(msg, answer.clone()).await?,
 
-            CommandCode::Join => self.message(&msg.get_reponse_destination(&self.settings.channels), &greet(&msg.get_nick())).await?,
+            CommandCode::Join => {
+                self.message(
+                    &msg.get_reponse_destination(&self.settings.channels),
+                    &greet(&msg.get_nick()),
+                )
+                .await?
+            }
 
             _ => {
                 warn!("Missing handler: {}", msg);
@@ -438,7 +550,10 @@ impl Client {
         Ok(())
     }
 
-    async fn handle_substitute_command(&mut self, msg: &Message) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_substitute_command(
+        &mut self,
+        msg: &Message,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let nick = msg.get_nick();
         let dst = msg.get_reponse_destination(&self.settings.channels);
 
@@ -447,8 +562,7 @@ impl Client {
                 error!("Ignoring ACTION message");
                 return Ok(());
             }
-            self.last_msg
-                .insert((dst, nick), msg.params[1].clone());
+            self.last_msg.insert((dst, nick), msg.params[1].clone());
             return Ok(());
         }
 
@@ -458,7 +572,12 @@ impl Client {
         let (pat, subst, flags) = if let Some(x) = parse_substitution(re) {
             x
         } else {
-            self.send.send(ClientCommand::Message(dst, "Could not parse substitution".to_string())).await?;
+            self.send
+                .send(ClientCommand::Message(
+                    dst,
+                    "Could not parse substitution".to_string(),
+                ))
+                .await?;
             return Ok(());
         };
 
@@ -497,7 +616,12 @@ impl Client {
             }
 
             Err(_) => {
-                self.send.send(ClientCommand::Message(dst, "Could not parse regex".to_string())).await?;
+                self.send
+                    .send(ClientCommand::Message(
+                        dst,
+                        "Could not parse regex".to_string(),
+                    ))
+                    .await?;
                 return Ok(());
             }
         }
@@ -506,7 +630,12 @@ impl Client {
     }
 }
 
-pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<ClientCommand>, control_send: Sender<ControlCommand>, settings: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub(crate) async fn task(
+    mut recv: Receiver<ControlCommand>,
+    send: Sender<ClientCommand>,
+    control_send: Sender<ControlCommand>,
+    settings: Arc<Settings>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
     let mut line = String::with_capacity(1024);
 
@@ -515,7 +644,7 @@ pub(crate) async fn task(mut recv: Receiver<ControlCommand>, send: Sender<Client
         settings: settings.clone(),
         send: send.clone(),
         last_msg: Default::default(),
-        last: Default::default()
+        last: Default::default(),
     };
 
     loop {

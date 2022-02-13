@@ -1,15 +1,15 @@
-use std::fmt::Display;
-use std::io;
-use std::io::{BufRead, BufReader};
 use json::JsonValue;
 use rand::prelude::IteratorRandom;
 use rand::thread_rng;
+use std::fmt::Display;
+use std::io;
+use std::io::{BufRead, BufReader};
 use tracing::error;
 
 pub(crate) fn text_box<T: Display, S: Display>(
-    mut lines: impl Iterator<Item=T>,
+    mut lines: impl Iterator<Item = T>,
     header: Option<S>,
-) -> impl Iterator<Item=String> {
+) -> impl Iterator<Item = String> {
     let mut state = 0;
     std::iter::from_fn(move || match state {
         0 => {
@@ -142,7 +142,5 @@ pub(crate) fn nag_user(nick: &str) -> String {
         Ok(format!("Hey {}, {}", nick, m))
     }
 
-    doit(nick).unwrap_or_else(|_| {
-        format!("Hey {}", nick)
-    })
+    doit(nick).unwrap_or_else(|_| format!("Hey {}", nick))
 }

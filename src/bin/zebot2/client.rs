@@ -1,14 +1,14 @@
+use crate::control::ControlCommand;
+use crate::Settings;
 use std::error::Error;
 use std::io;
-use std::net::{ToSocketAddrs};
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
-use crate::control::{ControlCommand};
-use tracing::{info, error, debug};
-use crate::Settings;
+use tracing::{debug, error, info};
 
 #[derive(Debug)]
 pub(crate) enum ClientCommand {
@@ -19,36 +19,48 @@ pub(crate) enum ClientCommand {
 }
 
 async fn connect(settings: &Settings) -> Result<TcpStream, Box<dyn Error + Send + Sync>> {
-    let addr = settings.server.to_socket_addrs().expect("server address").next().ok_or("Could not create server address")?;
+    let addr = settings
+        .server
+        .to_socket_addrs()
+        .expect("server address")
+        .next()
+        .ok_or("Could not create server address")?;
     Ok(TcpStream::connect(addr).await?)
 }
 
-async fn connect_tls(settings: &Settings) -> Result<tokio_rustls::client::TlsStream<TcpStream>, Box<dyn Error + Send + Sync>> {
+async fn connect_tls(
+    settings: &Settings,
+) -> Result<tokio_rustls::client::TlsStream<TcpStream>, Box<dyn Error + Send + Sync>> {
     let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
-    root_store.add_server_trust_anchors(
-        webpki_roots::TLS_SERVER_ROOTS
-            .0
-            .iter()
-            .map(|ta| {
-                tokio_rustls::rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-                    ta.subject,
-                    ta.spki,
-                    ta.name_constraints,
-                )
-            })
-    );
+    root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+        tokio_rustls::rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+            ta.subject,
+            ta.spki,
+            ta.name_constraints,
+        )
+    }));
     let config = tokio_rustls::rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(root_store)
         .with_no_client_auth();
     let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
     let sock = connect(settings).await?;
-    let domain = tokio_rustls::rustls::ServerName::try_from(settings.server.split(':').next().ok_or("invalid server name")?)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid dnsname"))?;
+    let domain = tokio_rustls::rustls::ServerName::try_from(
+        settings
+            .server
+            .split(':')
+            .next()
+            .ok_or("invalid server name")?,
+    )
+    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid dnsname"))?;
     Ok(connector.connect(domain, sock).await?)
 }
 
-async fn sock_send<T: AsyncWriteExt + Unpin>(sock: &mut T, rate_limit: &mut leaky_bucket_lite::LeakyBucket, data: &str) ->  Result<(), Box<dyn Error + Send + Sync>> {
+async fn sock_send<T: AsyncWriteExt + Unpin>(
+    sock: &mut T,
+    rate_limit: &mut leaky_bucket_lite::LeakyBucket,
+    data: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     rate_limit.acquire(data.len() as u32).await;
     for part in data.split("\r\n").filter(|p| !p.is_empty()) {
         debug!("send: {}", part);
@@ -56,7 +68,11 @@ async fn sock_send<T: AsyncWriteExt + Unpin>(sock: &mut T, rate_limit: &mut leak
     Ok(sock.write_all(data.as_bytes()).await?)
 }
 
-pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<ControlCommand>, settings: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub(crate) async fn task(
+    mut recv: Receiver<ClientCommand>,
+    send: Sender<ControlCommand>,
+    settings: Arc<Settings>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut sock = connect_tls(&settings).await?;
 
     let mut buf = vec![0u8; 1 << 16];

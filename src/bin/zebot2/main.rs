@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use clap::Parser;
 use tokio::spawn;
-use tokio::sync::mpsc::{channel};
+use tokio::sync::mpsc::channel;
 use tracing::info;
 
-mod control;
 mod client;
+mod control;
 mod util;
 
 #[derive(Parser, Debug, Clone)]
@@ -46,13 +46,7 @@ impl Settings {
     fn get_extra(&self, key: &str) -> Option<&str> {
         self.extra_opts
             .iter()
-            .filter_map(|e|
-                e
-                    .strip_prefix(key)
-                    .map(|x|
-                        x
-                            .strip_prefix('='))
-                    .flatten())
+            .filter_map(|e| e.strip_prefix(key).map(|x| x.strip_prefix('=')).flatten())
             .next()
     }
 }
@@ -64,8 +58,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .with_thread_ids(false)
         .with_thread_names(false)
         .finish();
-    tracing::subscriber::set_global_default(my_subscriber)
-        .expect("setting tracing default failed");
+    tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
 
     let args = Settings::parse();
     let args = Arc::new(args);
@@ -76,7 +69,12 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (client_send, control_recv) = channel(16);
 
     let cl = spawn(client::task(client_recv, client_send.clone(), args.clone()));
-    let ctrl = spawn(control::task(control_recv, control_send.clone(), client_send.clone(), args.clone()));
+    let ctrl = spawn(control::task(
+        control_recv,
+        control_send.clone(),
+        client_send.clone(),
+        args.clone(),
+    ));
 
     let result = tokio::join!(cl, ctrl);
     result.0??;
