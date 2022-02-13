@@ -1,21 +1,16 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::fmt::Display;
 use std::io;
 use std::io::BufReader;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use json::JsonValue;
-use nom::AsBytes;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use rand::prelude::*;
 use std::io::BufRead;
 use std::path::Path;
-use std::thread::sleep;
 use chrono::{Local};
 use irc2::{Message, Prefix};
 use irc2::command::CommandCode;
@@ -25,7 +20,7 @@ use url::Url;
 
 use crate::Settings;
 use crate::client::{ClientCommand};
-use crate::util::{is_json_flag_set, text_box, zebot_version};
+use crate::util::{is_json_flag_set, parse_substitution, text_box, zebot_version};
 
 #[derive(Debug)]
 pub(crate) enum ControlCommand {
@@ -72,146 +67,9 @@ async fn url_saver(msg: &irc2::Message, settings: Arc<Settings>) -> Result<(), B
     Ok(())
 }
 
-/*
-struct SubstituteLastHandler {
-    last_msg: RefCell<HashMap<(String, String), String>>,
-}
-
-impl SubstituteLastHandler {
-    fn new() -> Self {
-        SubstituteLastHandler {
-            last_msg: RefCell::new(HashMap::new()),
-        }
-    }
-}
-
-impl MessageHandler for SubstituteLastHandler {
-    fn handle(
-        &self,
-        ctx: &Context,
-        msg: &Message,
-    ) -> Result<HandlerResult, io::Error> {
-        let nick = msg.get_nick();
-        let dst = msg.get_reponse_destination(&block_on(async { ctx.joined_channels.read().await }));
-
-        if !msg.params[1].starts_with("!s") && !msg.params[1].starts_with("!S") {
-            if msg.params[1].starts_with("\x01ACTION") {
-                log_error!("Ignoring ACTION message");
-                return Ok(HandlerResult::NotInterested);
-            }
-            self.last_msg
-                .borrow_mut()
-                .insert((dst, nick), msg.params[1].clone());
-            return Ok(HandlerResult::NotInterested);
-        }
-
-        let re = &msg.params[1][1..];
-        let big_s = msg.params[1].chars().nth(1).unwrap_or('_') == 'S';
-
-        let (pat, subst, flags) = if let Some(x) = parse_substitution(re) {
-            x
-        } else {
-            send.send(ControlCommand::TaskDone(Some((&dst, "Could not parse substitution");
-            return Ok(HandlerResult::Handled);
-        };
-
-        let (flags, _save_subst) = if flags.contains('s') {
-            (flags.replace("s", ""), true)
-        } else {
-            (flags, false)
-        };
-
-        match regex::Regex::new(&pat) {
-            Ok(re) => {
-                if let Some(last) = self.last_msg.borrow().get(&(dst.clone(), nick.clone())) {
-                    let new_msg = if flags.contains('g') {
-                        re.replace_all(last, subst.as_str())
-                    } else if let Ok(n) = flags.parse::<usize>() {
-                        re.replacen(last, n, subst.as_str())
-                    } else {
-                        re.replace(last, subst.as_str())
-                    };
-
-                    if new_msg != last.as_str() {
-                        // if save_subst {
-                        //     self.last_msg.borrow_mut().insert((dst.clone(), nick.clone()), new_msg.to_string());
-                        //     log_error!("{} new last message '{}'", nick, msg.params[1].to_string());
-                        // }
-
-                        let new_msg = if big_s {
-                            format!("{} meinte: {}", nick, new_msg)
-                        } else {
-                            new_msg.to_string()
-                        };
-
-                        send.send(ControlCommand::TaskDone(Some((&dst, &new_msg);
-                    }
-                }
-            }
-
-            Err(_) => {
-                send.send(ControlCommand::TaskDone(Some((&dst, "Could not parse regex");
-                return Ok(HandlerResult::Handled);
-            }
-        }
-
-        Ok(HandlerResult::Handled)
-    }
-}
-
-struct ZeBotAnswerHandler {
-    last: RefCell<HashMap<Prefix, Instant>>,
-}
-
-impl ZeBotAnswerHandler {
-    fn new() -> Self {
-        Self {
-            last: RefCell::new(HashMap::new()),
-        }
-    }
-}
-
-impl MessageHandler for ZeBotAnswerHandler {
-    fn handle(
-        &self,
-        ctx: &Context,
-        msg: &Message,
-    ) -> Result<HandlerResult, io::Error> {
-        if msg.params.len() > 1 && msg.params[1..].iter().any(|x| x.contains(ctx.nick())) {
-            let now = Instant::now();
-            let mut last = self.last.borrow_mut();
-            let pfx = msg.prefix.as_ref().unwrap();
-            if last.contains_key(pfx) {
-                let last_ts = *last.get(pfx).unwrap();
-                last.entry(pfx.clone()).and_modify(|x| *x = now);
-                if now.duration_since(last_ts) < Duration::from_secs(2) {
-                    return Ok(HandlerResult::NotInterested);
-                }
-            } else {
-                last.entry(pfx.clone()).or_insert_with(|| now);
-            }
-
-            // It would seem, I need some utility functions to retrieve message semantics
-            let m = if thread_rng().gen_bool(0.93) {
-                nag_user(&msg.get_nick())
-            } else {
-                format!("Hey {}", &msg.get_nick())
-            };
-
-            let dst = msg.get_reponse_destination(&block_on(async {ctx.joined_channels.read().await}));
-            send.send(ControlCommand::TaskDone(Some((&dst, &m);
-        }
-
-        // Pretend we're not interested
-        Ok(HandlerResult::NotInterested)
-    }
-}
-*/
-
 pub enum HandlerResult {
     Handled,
     NotInterested,
-    Error(String),
 }
 
 async fn callout(msg: irc2::Message, settings: Arc<Settings>, send: Sender<ControlCommand>) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
@@ -411,7 +269,7 @@ fn nag_user(nick: &str) -> String {
         Ok(format!("Hey {}, {}", nick, m))
     }
 
-    doit(nick).unwrap_or_else(|x| {
+    doit(nick).unwrap_or_else(|_| {
         format!("Hey {}", nick)
     })
 }
@@ -486,7 +344,7 @@ impl Client {
         Ok(())
     }
 
-    async fn handle_zebot_command(&self, msg: &Message, dst: &str, cmd: &str, args: &[&str], send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_zebot_command(&mut self, msg: &Message, dst: &str, cmd: &str, _args: &[&str], send: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
         match cmd {
             "!up" | "!uptime" => self.handle_command_uptime(dst).await?,
             "!ver" | "!version" => self.message(dst, &format!("I am version {}, let's not talk about it!", zebot_version())).await?,
@@ -511,9 +369,9 @@ impl Client {
         Ok(())
     }
 
-    async fn zebot_answer(&mut self, msg: &irc2::Message, nick: &str, dst: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn zebot_answer(&mut self, msg: &irc2::Message, _nick: &str, dst: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         let now = Instant::now();
-        let mut last = &mut self.last;
+        let last = &mut self.last;
         let pfx = msg.prefix.as_ref().unwrap();
         if last.contains_key(pfx) {
             let last_ts = *last.get(pfx).unwrap();
@@ -567,6 +425,8 @@ impl Client {
 
         spawn(youtube_title(dst.clone(), text.clone(), send.clone(), self.settings.clone()));
 
+        self.substitute_handler(msg).await?;
+
         if text.starts_with('!') && text.len() > 1 && text.as_bytes()[1].is_ascii_alphanumeric() {
             let textv = text.split_ascii_whitespace().collect::<Vec<_>>();
             self.handle_zebot_command(msg, &dst, text.as_str(), &textv[1..], send.clone()).await?;
@@ -601,8 +461,6 @@ impl Client {
     }
 
     async fn handle_irc_command(&mut self, msg: &irc2::Message, answer: Sender<ControlCommand>) -> Result<(), Box<dyn Error + Send + Sync>> {
-        use irc2::command::CommandCode;
-
         let args = &msg.params;
         let argc = args.len();
         let cmd = &msg.command;
@@ -619,6 +477,73 @@ impl Client {
 
             _ => {
                 warn!("Missing handler: {}", msg);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn substitute_handler(&mut self, msg: &Message) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let nick = msg.get_nick();
+        let dst = msg.get_reponse_destination(&self.settings.channels);
+
+        if !msg.params[1].starts_with("!s") && !msg.params[1].starts_with("!S") {
+            if msg.params[1].starts_with("\x01ACTION") {
+                error!("Ignoring ACTION message");
+                return Ok(());
+            }
+            self.last_msg
+                .insert((dst, nick), msg.params[1].clone());
+            return Ok(());
+        }
+
+        let re = &msg.params[1][1..];
+        let big_s = msg.params[1].chars().nth(1).unwrap_or('_') == 'S';
+
+        let (pat, subst, flags) = if let Some(x) = parse_substitution(re) {
+            x
+        } else {
+            self.send.send(ClientCommand::Message(dst, "Could not parse substitution".to_string())).await?;
+            return Ok(());
+        };
+
+        let (flags, _save_subst) = if flags.contains('s') {
+            (flags.replace("s", ""), true)
+        } else {
+            (flags, false)
+        };
+
+        match regex::Regex::new(&pat) {
+            Ok(re) => {
+                if let Some(last) = self.last_msg.get(&(dst.clone(), nick.clone())) {
+                    let new_msg = if flags.contains('g') {
+                        re.replace_all(last, subst.as_str())
+                    } else if let Ok(n) = flags.parse::<usize>() {
+                        re.replacen(last, n, subst.as_str())
+                    } else {
+                        re.replace(last, subst.as_str())
+                    };
+
+                    if new_msg != last.as_str() {
+                        // if save_subst {
+                        //     self.last_msg.borrow_mut().insert((dst.clone(), nick.clone()), new_msg.to_string());
+                        //     log_error!("{} new last message '{}'", nick, msg.params[1].to_string());
+                        // }
+
+                        let new_msg = if big_s {
+                            format!("{} meinte: {}", nick, new_msg)
+                        } else {
+                            new_msg.to_string()
+                        };
+
+                        self.send.send(ClientCommand::Message(dst, new_msg)).await?;
+                    }
+                }
+            }
+
+            Err(_) => {
+                self.send.send(ClientCommand::Message(dst, "Could not parse regex".to_string())).await?;
+                return Ok(());
             }
         }
 

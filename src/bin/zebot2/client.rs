@@ -14,7 +14,6 @@ use crate::Settings;
 pub(crate) enum ClientCommand {
     Message(String, String),
     Join(String),
-    Leave(String),
     Quit,
     Logon { nick: String, realname: String },
 }
@@ -103,10 +102,6 @@ pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<Control
                     ClientCommand::Join(chan) => {
                         sock_send(&mut sock, &mut send_rate_limit, &format!("JOIN :{}\r\n", chan)).await?;
                     }
-
-                    ClientCommand::Leave(chan) => {
-                        sock_send(&mut sock, &mut send_rate_limit, &format!("PART :{}\r\n", chan)).await?;
-                    }
                 }
             }
 
@@ -178,11 +173,6 @@ pub(crate) async fn task(mut recv: Receiver<ClientCommand>, send: Sender<Control
                             let l = i.len();
                             off = pos + l;
                             buf.copy_within(pos..pos+l, 0);
-                            break;
-                        }
-
-                        _ => {
-                            off = 0;
                             break;
                         }
                     }
