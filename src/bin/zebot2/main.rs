@@ -31,7 +31,7 @@ struct Settings {
     password_file: Option<String>,
 
     /// Channels to join
-    #[clap(short, long)]
+    #[clap(short, long="channel", parse(try_from_str=validate_channel))]
     channels: Vec<String>,
 
     /// Server ping timeout
@@ -41,6 +41,14 @@ struct Settings {
     /// Extra options e.g. -x youtube_dl=$PWD/youtube-dl
     #[clap(short = 'x', long = "extra")]
     extra_opts: Vec<String>,
+}
+
+fn validate_channel(arg: &str) -> Result<String, String> {
+    if arg.chars().any(|c: char| ", \t".contains(c)) {
+        Err(format!("Invalid channel name: '{arg}'"))
+    } else {
+        Ok(arg.to_string())
+    }
 }
 
 impl Settings {
