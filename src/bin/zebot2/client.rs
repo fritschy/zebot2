@@ -165,12 +165,6 @@ pub(crate) async fn task(
 
                                     sock_send(&mut sock, &mut send_rate_limit, &resp).await?;
                                 }
-                                Quit => {
-                                    warn!("Received QUIT from server: {msg}");
-                                    send.send(ControlCommand::ServerQuit("Received QUIT from server".to_string())).await?;
-                                    return Ok(());
-
-                                }
                                 Error => {
                                     error!("Error from server: {msg}");
                                     send.send(ControlCommand::ServerQuit("Received ERROR from server".to_string())).await?;
