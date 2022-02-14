@@ -26,7 +26,9 @@ async fn connect(settings: &Settings) -> Result<TcpStream, Box<dyn Error + Send 
         .expect("server address")
         .next()
         .ok_or("Could not create server address")?;
-    Ok(TcpStream::connect(addr).await?)
+    let sock = TcpStream::connect(addr).await?;
+    sock.set_nodelay(true)?;
+    Ok(sock)
 }
 
 async fn connect_tls(
