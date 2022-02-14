@@ -514,14 +514,14 @@ impl Control {
 
         let text = &args[1];
 
-        url_saver(msg, self.settings.clone()).await?;
-
         spawn(youtube_title(
             dst.clone(),
             text.clone(),
             send.clone(),
             self.settings.clone(),
         ));
+
+        url_saver(msg, self.settings.clone()).await?;
 
         return_if_handled!(self.handle_substitute_command(msg).await?);
 
