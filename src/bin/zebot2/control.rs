@@ -66,7 +66,7 @@ async fn url_saver(
 async fn callout(
     msg: irc2::Message,
     settings: Arc<Settings>,
-    send: Sender<ControlCommand>,
+    send: Sender<ClientCommand>,
 ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
     if msg.params.len() < 2 || !msg.params[1].starts_with('!') {
         return Ok(HandlerResult::NotInterested);
@@ -117,7 +117,7 @@ async fn callout(
             path: String,
             args: Vec<String>,
             settings: Arc<Settings>,
-            send: Sender<ControlCommand>,
+            send: Sender<ClientCommand>,
         ) -> Result<(), Box<dyn Error + Send + Sync>> {
             let s = Instant::now();
             let cmd = timeout(
@@ -132,7 +132,7 @@ async fn callout(
 
             if let Err(e) = cmd {
                 warn!("Handler timed out: {e:}");
-                send.send(ControlCommand::TaskMessage(
+                send.send(ClientCommand::Message(
                     dst,
                     "Handler timed out".to_string(),
                 ))
@@ -148,7 +148,7 @@ async fn callout(
                     if !p.status.success() {
                         error!("Handler failed with code {}", p.status.code().unwrap());
                         debug!("Handler output={p:?}");
-                        send.send(ControlCommand::TaskMessage(
+                        send.send(ClientCommand::Message(
                             dst,
                             "Somehow, that did not work...".to_string(),
                         ))
@@ -168,7 +168,7 @@ async fn callout(
                                 debug!("Response={response:?}");
 
                                 if response.contains("error") {
-                                    send.send(ControlCommand::TaskMessage(
+                                    send.send(ClientCommand::Message(
                                         dst,
                                         "Somehow, that did not work...".to_string(),
                                     ))
@@ -176,7 +176,7 @@ async fn callout(
                                     return Ok(());
                                 } else if !is_json_flag_set(&response["box"]) {
                                     for l in response["lines"].members() {
-                                        send.send(ControlCommand::TaskMessage(
+                                        send.send(ClientCommand::Message(
                                             dst.clone(),
                                             l.to_string(),
                                         ))
@@ -235,7 +235,7 @@ async fn callout(
                                     };
 
                                     for i in text_box(lines.iter(), response["title"].as_str()) {
-                                        send.send(ControlCommand::TaskMessage(dst.clone(), i))
+                                        send.send(ClientCommand::Message(dst.clone(), i))
                                             .await?;
                                     }
                                 }
@@ -275,7 +275,7 @@ async fn callout(
 async fn youtube_title(
     dst: String,
     text: String,
-    send: Sender<ControlCommand>,
+    send: Sender<ClientCommand>,
     settings: Arc<Settings>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let yt_re = regex::Regex::new(r"https?://((www.)?youtube\.com/watch|youtu.be/)").unwrap();
@@ -309,7 +309,7 @@ async fn youtube_title(
                 let err = String::from_utf8_lossy(output.stderr.as_ref());
                 if !err.is_empty() {
                     error!("Got error from youtube-dl: {}", err);
-                    send.send(ControlCommand::TaskMessage(
+                    send.send(ClientCommand::Message(
                         dst.to_string(),
                         format!("Got an error for URL {}, is this a valid video URL?", &url),
                     ))
@@ -317,7 +317,7 @@ async fn youtube_title(
                 } else {
                     let title = String::from_utf8_lossy(output.stdout.as_ref());
                     if !title.is_empty() {
-                        send.send(ControlCommand::TaskMessage(
+                        send.send(ClientCommand::Message(
                             dst.to_string(),
                             format!("{} has title '{}'", &url, title.trim()),
                         ))
@@ -351,7 +351,6 @@ macro_rules! return_if_handled {
 pub(crate) enum ControlCommand {
     Irc(irc2::Message),
     ServerQuit(String),
-    TaskMessage(String, String),
 }
 
 #[derive(Debug)]
@@ -410,7 +409,7 @@ impl Control {
         dst: &str,
         cmd: &str,
         _args: &[&str],
-        send: Sender<ControlCommand>,
+        send: Sender<ClientCommand>,
     ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
         let cmd = cmd.split_ascii_whitespace().next().unwrap_or("");
 
@@ -496,7 +495,7 @@ impl Control {
     async fn handle_privmsg(
         &mut self,
         msg: &irc2::Message,
-        send: Sender<ControlCommand>,
+        send: Sender<ClientCommand>,
     ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
         let cmd = &msg.command;
 
@@ -584,7 +583,7 @@ impl Control {
     async fn handle_irc_command(
         &mut self,
         msg: &irc2::Message,
-        answer: Sender<ControlCommand>,
+        answer: Sender<ClientCommand>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let args = &msg.params;
         let argc = args.len();
@@ -732,7 +731,6 @@ impl Control {
 pub(crate) async fn task(
     mut recv: Receiver<ControlCommand>,
     send: Sender<ClientCommand>,
-    control_send: Sender<ControlCommand>,
     settings: Arc<Settings>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
@@ -753,7 +751,7 @@ pub(crate) async fn task(
             msg = recv.recv() => {
                 if let Some(msg) = &msg {
                     match msg {
-                        ControlCommand::Irc(msg) => if let Err(e) = client.handle_irc_command(msg, control_send.clone()).await {
+                        ControlCommand::Irc(msg) => if let Err(e) = client.handle_irc_command(msg, send.clone()).await {
                             error!("Client side error: {e:?}");
                         }
 
@@ -761,10 +759,6 @@ pub(crate) async fn task(
                             recv.close();
                             info!("Server quit: {}", reason);
                             break;
-                        }
-
-                        ControlCommand::TaskMessage(dst, msg) => {
-                            send.send(ClientCommand::Message(dst.clone(), msg.clone())).await?;
                         }
                     }
                 }

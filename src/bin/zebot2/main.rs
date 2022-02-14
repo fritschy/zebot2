@@ -73,7 +73,6 @@ async fn startup(args: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>
     let ctrl = spawn(control::task(
         control_recv,
         control_send.clone(),
-        client_send.clone(),
         args.clone(),
     ));
 
