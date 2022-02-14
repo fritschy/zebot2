@@ -18,7 +18,7 @@ if len(args) >= 1:
         index = 0
 
 def german(url):
-    with urlopen(url, timeout=10) as r:
+    with urlopen(url) as r:
         bs = BeautifulSoup(r.read(), features="lxml")
     qb = bs.find(attrs={"class": "quotebox"})
     qid = "de/{}".format(next((x.attrs['name'] for x in qb.children if x.name)))
@@ -27,7 +27,7 @@ def german(url):
     return (qid, lines)
 
 def engrish(url):
-    with urlopen(url, timeout=10) as r:
+    with urlopen(url) as r:
         bs = BeautifulSoup(r.read(), features="lxml")
     q = bs.find(attrs={"class": "quote"})
     qid = "en/{}".format(list(q.children)[0].attrs['href'].strip('?'))

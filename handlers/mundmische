@@ -10,7 +10,7 @@ if len(args) < 1:
 from mechanize import Browser
 
 br = Browser()
-br.open("https://www.mundmische.de/", timeout=5)
+br.open("https://www.mundmische.de/")
 br.select_form(action="/suche")
 br["search_query"] = args
 response = br.submit()
