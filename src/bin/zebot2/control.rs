@@ -361,6 +361,8 @@ struct Control {
 
     last_msg: BTreeMap<(String, String), String>,
     last: HashMap<Prefix, Instant>,
+
+    pings: HashMap<u64, (String, Instant)>,
 }
 
 impl Control {
@@ -414,9 +416,9 @@ impl Control {
         let cmd = cmd.split_ascii_whitespace().next().unwrap_or("");
 
         match cmd {
-            "!up" | "!uptime" => return_if_handled!(self.handle_command_uptime(dst).await?),
+            "!up" | "!uptime" => return self.handle_command_uptime(dst).await,
             "!ver" | "!version" => {
-                self.message(
+                return self.message(
                     dst,
                     &format!(
                         "I am {} version {}, let's not talk about it!",
@@ -425,30 +427,32 @@ impl Control {
                     ),
                 )
                 .await
-                .map(|_| HandlerResult::Handled)?;
-                return Ok(HandlerResult::Handled);
+                .map(|_| HandlerResult::Handled);
             }
             "!nag" => {
-                self.message(dst, &nag_user(&msg.get_nick()))
+                return self.message(dst, &nag_user(&msg.get_nick()))
                     .await
-                    .map(|_| HandlerResult::Handled)?;
-                return Ok(HandlerResult::Handled);
+                    .map(|_| HandlerResult::Handled);
             }
             "!echo" => {
                 let m = &msg.params[1];
                 if m.len() > 6 {
                     let m = &m[6..];
                     if !m.is_empty() {
-                        self.message(dst, m).await.map(|_| HandlerResult::Handled)?;
-                        return Ok(HandlerResult::Handled);
+                        return self.message(dst, m).await.map(|_| HandlerResult::Handled);
                     }
                 }
             }
             "!exec" | "!sh" | "!shell" | "!powershell" | "!power-shell" => {
                 let m = format!("Na aber wer wird denn gleich, {}", msg.get_nick());
-                self.message(dst, &m)
+                return self.message(dst, &m)
                     .await
-                    .map(|_| HandlerResult::Handled)?;
+                    .map(|_| HandlerResult::Handled);
+            }
+            "!ping" => {
+                let id: u64 = thread_rng().gen();
+                self.pings.insert(id, (msg.get_reponse_destination(&self.settings.channels), Instant::now()));
+                self.send.send(ClientCommand::RawMessage(format!("PING {id}\r\n"))).await?;
                 return Ok(HandlerResult::Handled);
             }
             _ => {
@@ -599,6 +603,18 @@ impl Control {
                 self.logon().await?
             }
 
+            CommandCode::Generic(code) if code == "PONG" && args.len() == 2 => {
+                if let Ok(pid) = args[1].parse::<u64>() {
+                    if let Some((dst, t0)) = self.pings.remove(&pid) {
+                        self.message(&dst, &format!("{} {:?}", args[0], Instant::now() - t0)).await?;
+                    } else {
+                        warn!("Could not find ping entry for pong: {msg:?}");
+                    }
+                } else {
+                    warn!("Could not parse ID from pong: {msg:?}");
+                }
+            }
+
             CommandCode::PrivMsg => self.handle_privmsg(msg, answer.clone()).await.map(|_| ())?,
 
             CommandCode::Join => {
@@ -746,11 +762,19 @@ pub(crate) async fn task(
         send: send.clone(),
         last_msg: Default::default(),
         last: Default::default(),
+        pings: Default::default(),
     };
 
     debug!("settings={settings:#?}");
 
     loop {
+        {  // cleanup pings, not sure if this is really necessary though.
+            let now = Instant::now();
+            client.pings.retain(|a, b| {
+                ! (now > b.1 && now - b.1 > Duration::from_secs(1))
+            });
+        }
+
         tokio::select! {
             msg = recv.recv() => {
                 if let Some(msg) = &msg {
