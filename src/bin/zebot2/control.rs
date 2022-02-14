@@ -722,7 +722,10 @@ impl Control {
                 self.send.send(ClientCommand::RawMessage(format!("{args}\r\n"))).await?;
             }
 
-            _ => (),
+            _ => {
+                info!("raw command '{line}'");
+                self.send.send(ClientCommand::RawMessage(format!("{line}\r\n"))).await?;
+            }
         }
 
         Ok(())
@@ -775,14 +778,14 @@ pub(crate) async fn task(
                     Ok(n) if n == 0 => {
                         warn!("Got EOF... quitting");
                         send.send(ClientCommand::Quit).await?;
-                        continue;
+                        break;
                     }
                     Ok(_) => (),
                 }
 
                 let stripped = line.strip_suffix('\n').unwrap_or(&line);
 
-                if stripped.starts_with('!') {
+                if stripped.starts_with('/') {
                     client.handle_command(stripped).await?;
                 } else {
                     send.send(ClientCommand::Message(settings.channels[0].clone(), stripped.to_string())).await?;

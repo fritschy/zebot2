@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::io::{AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 #[derive(Debug)]
 pub(crate) enum ClientCommand {
