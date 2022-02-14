@@ -17,6 +17,7 @@ pub(crate) enum ClientCommand {
     Join(String),
     Quit,
     Logon { nick: String, realname: String },
+    RawMessage(String),
 }
 
 async fn connect(settings: &Settings) -> Result<TcpStream, Box<dyn Error + Send + Sync>> {
@@ -111,6 +112,10 @@ pub(crate) async fn task(
 
                     ClientCommand::Message(dst, msg) => {
                         sock_send(&mut sock, &mut send_rate_limit, &format!("PRIVMSG {} :{}\r\n", dst, msg)).await?;
+                    }
+
+                    ClientCommand::RawMessage(msg) => {
+                        sock_send(&mut sock, &mut send_rate_limit, &msg).await?;
                     }
 
                     ClientCommand::Logon {nick, realname} => {

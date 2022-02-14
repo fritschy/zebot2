@@ -718,7 +718,8 @@ impl Control {
             }
 
             "quote" => {
-                self.message(&self.settings.channels[0], args).await?;
+                info!("raw command '{args}'");
+                self.send.send(ClientCommand::RawMessage(format!("{args}\r\n"))).await?;
             }
 
             _ => (),
