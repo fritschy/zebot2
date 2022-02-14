@@ -161,11 +161,13 @@ pub(crate) async fn task(
                                 }
                                 Quit => {
                                     warn!("Received QUIT from server: {msg}");
+                                    send.send(ControlCommand::ServerQuit("Received QUIT from server".to_string())).await?;
                                     return Ok(());
 
                                 }
                                 Error => {
                                     error!("Error from server: {msg}");
+                                    send.send(ControlCommand::ServerQuit("Received ERROR from server".to_string())).await?;
                                     return Err(Box::new(io::Error::new(io::ErrorKind::Other, "IRC Error from Server")));
                                 }
                                 _ => (),
@@ -181,9 +183,11 @@ pub(crate) async fn task(
                             break;
                         }
 
-                        _ => {
-                            bufs.push_to_last(i);
-                            break;
+                        Err(e) => {
+                            // bufs.push_to_last(i);
+                            error!("Encountered an error from parser: {e:?}");
+                            send.send(ControlCommand::ServerQuit("Parse error".to_string())).await?;
+                            return Err(Box::new(io::Error::new(io::ErrorKind::Other, "IRC parse error")));
                         }
                     }
                 }
