@@ -6,7 +6,7 @@ use std::io;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, error, info, warn};
@@ -66,7 +66,12 @@ async fn sock_send<T: AsyncWriteExt + Unpin>(
     for part in data.split("\r\n").filter(|p| !p.is_empty()) {
         debug!("send: {}", part);
     }
-    Ok(sock.write_all(data.as_bytes()).await?)
+    sock.write_all(data.as_bytes()).await?;
+
+    // Should we need to flush here immediately?
+    sock.flush().await?;
+
+    Ok(())
 }
 
 pub(crate) async fn task(
@@ -99,7 +104,6 @@ pub(crate) async fn task(
                         info!("Got quit message ...");
                         send.send(ControlCommand::ServerQuit("Received QUIT".to_string())).await?;
                         sock_send(&mut sock, &mut send_rate_limit, "QUIT :Need to restart the distributed real-time Java cluster VM\r\n").await?;
-                        sock.flush().await?;
                         break;
                     }
 
@@ -193,8 +197,6 @@ pub(crate) async fn task(
                 }
             }
         }
-
-        sock.flush().await?;
     }
 
     info!("Server quitting...");
