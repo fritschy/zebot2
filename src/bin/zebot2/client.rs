@@ -23,8 +23,7 @@ pub(crate) enum ClientCommand {
 async fn connect(settings: &Settings) -> Result<TcpStream, Box<dyn Error + Send + Sync>> {
     let addr = settings
         .server
-        .to_socket_addrs()
-        .expect("server address")
+        .to_socket_addrs()?
         .next()
         .ok_or("Could not create server address")?;
     let sock = TcpStream::connect(addr).await?;

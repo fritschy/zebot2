@@ -76,9 +76,10 @@ async fn startup(args: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>
         args.clone(),
     ));
 
-    let result = tokio::join!(cl, ctrl);
-    result.0??;
-    result.1??;
+    tokio::select! {
+        e = cl => { e??; }
+        e = ctrl => { e??; }
+    }
 
     Ok(())
 }
