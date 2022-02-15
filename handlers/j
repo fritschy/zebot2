@@ -20,6 +20,6 @@ title = bs.find('a', attrs={'class': 'title'})
 text = bs.find('div', attrs={'class': 'expando'})
 
 lines = [title.text, *list(filter(lambda x: len(x) > 0, map(str.strip, text.text.splitlines())))]
-handler_exit(0, lines=lines, box=1, split_single_lines=1, title='r/{}'.format(j), link=url)
+handler_exit(0, lines=lines, box=1, wrap_single_lines=1, title='r/{}'.format(j), link=url)
 
 # vim:set ft=python:
