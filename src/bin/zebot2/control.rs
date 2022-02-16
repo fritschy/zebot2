@@ -146,8 +146,7 @@ async fn callout(
             match cmd {
                 Ok(p) => {
                     if !p.status.success() {
-                        error!("Handler failed with code {}", p.status.code().unwrap());
-                        debug!("Handler output={p:?}");
+                        error!("Handler failed with code {}: {p:?}", p.status.code().unwrap());
                         send.send(ClientCommand::Message(
                             dst,
                             "Somehow, that did not work...".to_string(),
