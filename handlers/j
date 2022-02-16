@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 from random import choice
 from handler_lib import handler_exit
 
-jj = ['Jokes', 'Unclejokes']
+jj = ['Jokes', 'Unclejokes', 'dadjokes']
 j = choice(jj)
 
 br = Browser()

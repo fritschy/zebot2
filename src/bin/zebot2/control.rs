@@ -12,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::spawn;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -167,7 +167,7 @@ async fn callout(
 
                                 const KNOWN_FIELDS: &[&str] = &[ "lines", "dst", "box", "wrap", "wrap_single_lines", "title", "link" ];
 
-                                if response.entries().any(|(k, _)| ! KNOWN_FIELDS.contains(k)) {
+                                if response.entries().any(|(k, _)| ! KNOWN_FIELDS.contains(&k)) {
                                     warn!("Handler response contains unknown fields!");
                                 }
 
@@ -176,7 +176,7 @@ async fn callout(
                                 if response.contains("error") {
                                     send.send(ClientCommand::Message(
                                         dst,
-                                        "Somehow, that did not work...".to_string(),
+                                        format!("Handler returned an error: {}", response["error"]),
                                     ))
                                     .await?;
                                     return Ok(());
@@ -263,7 +263,6 @@ async fn callout(
 
                 Err(e) => {
                     error!("Could not execute handler: {:?}", e);
-                    return Ok(());
                 }
             }
 
@@ -566,6 +565,17 @@ impl Control {
             })
             .await?;
 
+        sleep(Duration::from_secs(2)).await;
+
+        // join initial channels
+        for c in self.settings.channels.iter() {
+            self.send.send(ClientCommand::Join(c.clone())).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn nickserv_identify(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         if let Some(pwfile) = &self.settings.password_file {
             match tokio::fs::File::open(&pwfile).await {
                 Ok(mut f) => {
@@ -582,11 +592,6 @@ impl Control {
             }
         }
 
-        // join initial channels
-        for c in self.settings.channels.iter() {
-            self.send.send(ClientCommand::Join(c.clone())).await?;
-        }
-
         Ok(())
     }
 
@@ -598,16 +603,11 @@ impl Control {
         let args = &msg.params;
         let argc = args.len();
         let cmd = &msg.command;
-        let pfx = &msg.prefix;
 
         match cmd {
-            CommandCode::Notice
-                if argc == 2
-                    && args[1].contains("Checking Ident")
-                    && matches!(pfx, Some(irc2::Prefix::Server(_))) =>
-            {
-                self.logon().await?
-            }
+            CommandCode::Notice if argc == 2 && args[1].contains("Checking Ident") => self.logon().await?,
+
+            CommandCode::Notice if argc == 2 && args[1].contains("This nickname is registered.") => self.nickserv_identify().await?,
 
             CommandCode::Generic(code) if code == "PONG" && args.len() == 2 => {
                 if let Ok(pid) = args[1].parse::<u64>() {
@@ -633,8 +633,10 @@ impl Control {
                 }
             }
 
+            CommandCode::Ping => (),
+
             _ => {
-                warn!("Missing handler: {}", msg);
+                warn!("IRC Command not handled: {}", msg);
             }
         }
 
@@ -776,7 +778,7 @@ pub(crate) async fn task(
     loop {
         {  // cleanup pings, not sure if this is really necessary though.
             let now = Instant::now();
-            client.pings.retain(|a, b| {
+            client.pings.retain(|_a, b| {
                 ! (now > b.1 && now - b.1 > Duration::from_secs(1))
             });
         }
