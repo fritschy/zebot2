@@ -89,7 +89,7 @@ pub(crate) async fn task(
     let mut send_rate_limit = leaky_bucket_lite::LeakyBucket::builder()
         .max(9)
         .refill_amount(1)
-        .refill_interval(Duration::from_millis(1333))
+        .refill_interval(Duration::from_millis(1500))
         .tokens(7)
         .build();
 
