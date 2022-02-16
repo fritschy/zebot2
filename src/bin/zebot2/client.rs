@@ -93,6 +93,8 @@ pub(crate) async fn task(
         .tokens(7)
         .build();
 
+    let mut parse_errors_count = 0;
+
     while retries > 0 {
         tokio::select! {
             msg = recv.recv() => {
@@ -152,6 +154,7 @@ pub(crate) async fn task(
                 while !i.is_empty() {
                     match irc2::parse(i) {
                         Ok((r, msg)) => {
+                            parse_errors_count = 0;
                             i = r;
 
                             use irc2::command::CommandCode::*;
@@ -181,17 +184,21 @@ pub(crate) async fn task(
                             send.send(ControlCommand::Irc(msg.clone())).await?;
                         }
 
-                        // Input ended, no remaining bytes, just continue as normal
-                        Err(e) if e.is_incomplete() => {
-                            bufs.push_to_last(i);
-                            break;
-                        }
-
-                        Err(e) => {
-                            // bufs.push_to_last(i);
+                        Err(e) if parse_errors_count >= 5 => {
+                            // This one is fatal, we ran into parse errors a couple of times...
                             error!("Encountered an error from parser: {e:?}");
                             send.send(ControlCommand::ServerQuit("Parse error".to_string())).await?;
                             return Err(Box::new(io::Error::new(io::ErrorKind::Other, "IRC parse error")));
+                        }
+
+                        // Input ended, no remaining bytes, just continue as normal
+                        Err(_) => {
+                            // We do not correctly have Incomplete-info from parser, so we need to
+                            // treat every error as possibly "Incomplete". So at least, retry a couple
+                            // of times...
+                            parse_errors_count += 1;
+                            bufs.push_to_last(i);
+                            break;
                         }
                     }
                 }
