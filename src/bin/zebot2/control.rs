@@ -165,6 +165,12 @@ async fn callout(
                                     dst
                                 };
 
+                                const KNOWN_FIELDS: &[&str] = &[ "lines", "dst", "box", "wrap", "wrap_single_lines", "title", "link" ];
+
+                                if response.entries().any(|(k, _)| ! KNOWN_FIELDS.contains(k)) {
+                                    warn!("Handler response contains unknown fields!");
+                                }
+
                                 debug!("Response={response:?}");
 
                                 if response.contains("error") {
