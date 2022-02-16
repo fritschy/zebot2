@@ -3,23 +3,39 @@
 from mechanize import Browser
 from bs4 import BeautifulSoup
 from random import choice
-from handler_lib import handler_exit
+from urllib.parse import urlparse
+from handler_lib import handler_exit, get_split_args, get_args
 
-jj = ['Jokes', 'Unclejokes', 'dadjokes']
+def get_url(url):
+    r = br.open(url)
+    url = r.geturl().split('?')[0]
+    d = r.get_data()
+    bs = BeautifulSoup(d, features='lxml')
+    title = bs.find('a', attrs={'class': 'title'})
+    text = bs.find('div', attrs={'class': 'expando'})
+    # Hack to fix broken text extraction on crossposts
+    if bs.find('div', attrs={'class': 'crosspost-preview'}):
+        text = bs.find('div', attrs={'class': 'crosspost-preview-content'})
+    return (title, text, url, '/'.join(urlparse(url).path.split('/', 3)[1:3]))
+
+jj = ['', 'uncle', 'dad', 'dirty']
 j = choice(jj)
-
 br = Browser()
 br.set_handle_robots(False)
 br.addheaders=[('User-Agent', 'Mozilla/6.0 (X11; U; Linux; 3.2.0)')]
-url = 'https://old.reddit.com/r/{}/random'.format(j)
-r = br.open(url)
-url = r.geturl().split('?')[0]
-d = r.get_data()
-bs = BeautifulSoup(d, features='lxml')
-title = bs.find('a', attrs={'class': 'title'})
-text = bs.find('div', attrs={'class': 'expando'})
+url = 'https://old.reddit.com/r/{}jokes/random'.format(j)
+
+try:
+    args = get_split_args()
+    a = args[0]
+    if a.lower() in jj[1:]:
+        (title, text, url, origin) = get_url('https://old.reddit.com/r/{}jokes/random'.format(a.lower()))
+    else:
+        (title, text, url, origin) = get_url(a)
+except:
+    (title, text, url, origin) = get_url('https://old.reddit.com/r/{}jokes/random'.format(j))
 
 lines = [title.text, *list(filter(lambda x: len(x) > 0, map(str.strip, text.text.splitlines())))]
-handler_exit(0, lines=lines, box=1, wrap_single_lines=1, title='r/{}'.format(j), link=url)
+handler_exit(0, lines=lines, box=1, wrap_single_lines=1, title=origin, link=url)
 
 # vim:set ft=python:
