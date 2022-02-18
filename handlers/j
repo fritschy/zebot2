@@ -35,7 +35,7 @@ try:
 except:
     (title, text, url, origin) = get_url('https://old.reddit.com/r/{}jokes/random'.format(j))
 
-lines = [title.text, *list(filter(lambda x: len(x) > 0, map(str.strip, text.text.splitlines())))]
+lines = [title.text] + (list(filter(lambda x: len(x) > 0, map(str.strip, text.text.splitlines()))) if text else [])
 handler_exit(0, lines=lines, box=1, wrap_single_lines=1, title=origin, link=url)
 
 # vim:set ft=python:
