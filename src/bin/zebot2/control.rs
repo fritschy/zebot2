@@ -106,6 +106,7 @@ async fn callout(
     //   "wrap_single_lines": "0"|"1" # optional
     //   "title": "string"            # optional
     //   "link": "string"             # optional
+    //   "raw": "raw-irc-proto"       # optional, overrides everything else
     // }
 
     info!("callout args={args:?}");
@@ -158,8 +159,13 @@ async fn callout(
                     if let Ok(response) = String::from_utf8(p.stdout) {
                         match json::parse(&response) {
                             Ok(response) => {
-                                let dst = if response.contains("dst") {
-                                    response["dst"].to_string()
+                                if let Some(raw) = response["raw"].as_str() {
+                                    send.send(ClientCommand::RawMessage(raw.to_string())).await?;
+                                    return Ok(());
+                                }
+
+                                let dst = if let Some(dst) = response["dst"].as_str() {
+                                    dst.to_string()
                                 } else {
                                     dst
                                 };
@@ -172,10 +178,10 @@ async fn callout(
 
                                 debug!("Response={response:?}");
 
-                                if response.contains("error") {
+                                if let Some(error) = response["error"].as_str() {
                                     send.send(ClientCommand::Message(
                                         dst,
-                                        format!("Handler returned an error: {}", response["error"]),
+                                        format!("Handler returned an error: {}", error),
                                     ))
                                     .await?;
                                     return Ok(());
@@ -193,7 +199,7 @@ async fn callout(
                                         .map(|x| x.to_string())
                                         .collect::<Vec<_>>();
                                     let lines = if is_json_flag_set(&response["wrap"])
-                                        && lines.iter().map(|x| x.len()).any(|l| l > 80)
+                                        && lines.iter().any(|x| x.len() > 80)
                                     {
                                         let nlines = lines.len();
 
