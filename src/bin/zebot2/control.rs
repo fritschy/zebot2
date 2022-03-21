@@ -7,7 +7,7 @@ use std::error::Error;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use textwrap::word_splitters::NoHyphenation;
+use textwrap::WordSplitter::NoHyphenation;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::spawn;
