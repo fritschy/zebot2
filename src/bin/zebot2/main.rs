@@ -89,8 +89,15 @@ async fn startup(args: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?
+        .block_on(async { async_main().await })
+}
+
+async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let my_subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_max_level(tracing::Level::INFO)
         .with_thread_ids(false)

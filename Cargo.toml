@@ -6,7 +6,7 @@ authors = [ "Marcus Borkenhagen <m AT fritschy DOT de>" ]
 
 [dependencies]
 irc2 = { git = "https://github.com/fritschy/zebot.git", package = "irc2" }
-tokio = { version = "1", default-features = false, features = ["rt", "io-std", "io-util", "net", "process", "macros", "tokio-macros", "fs"] }
+tokio = { version = "1", default-features = false, features = ["rt", "io-std", "io-util", "net", "process", "macros", "fs"] }
 clap = { version = "3.1.6", features = ["derive"] }
 nom = "7.1.1"
 tracing = "0.1.32"
