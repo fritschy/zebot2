@@ -89,7 +89,7 @@ async fn startup(args: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>
     Ok(())
 }
 
-#[tokio::main(flavor = "multi_thread")]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let my_subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_max_level(tracing::Level::INFO)
