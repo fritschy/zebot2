@@ -1,7 +1,7 @@
 use chrono::Local;
 use irc2::command::CommandCode;
 use irc2::{Message, Prefix};
-use rand::prelude::*;
+use nanorand::{Rng, tls_rng};
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::path::Path;
@@ -460,7 +460,7 @@ impl Control {
                     .map(|_| HandlerResult::Handled);
             }
             "!ping" => {
-                let id: u64 = thread_rng().gen();
+                let id: u64 = tls_rng().generate();
                 self.pings.insert(id, (msg.get_reponse_destination(&self.settings.channels), Instant::now()));
                 self.send.send(ClientCommand::RawMessage(format!("PING {id}\r\n"))).await?;
                 return Ok(HandlerResult::Handled);
@@ -493,7 +493,7 @@ impl Control {
         }
 
         // It would seem, I need some utility functions to retrieve message semantics
-        let m = if thread_rng().gen_bool(0.93) {
+        let m = if tls_rng().generate::<f32>() < 0.93 {
             nag_user(&msg.get_nick())
         } else {
             format!("Hey {}", &msg.get_nick())
@@ -680,7 +680,7 @@ impl Control {
         };
 
         let (flags, _save_subst) = if flags.contains('s') {
-            (flags.replace("s", ""), true)
+            (flags.replace('s', ""), true)
         } else {
             (flags, false)
         };

@@ -1,9 +1,8 @@
 use json::JsonValue;
-use rand::prelude::IteratorRandom;
-use rand::thread_rng;
+use nanorand::{Rng, tls_rng};
 use std::fmt::Display;
 use std::io;
-use std::io::{BufRead, BufReader};
+use std::io::{BufReader, Read};
 use tracing::error;
 
 pub(crate) fn text_box<T: Display, S: Display>(
@@ -119,11 +118,8 @@ pub(crate) fn greet(nick: &str) -> String {
         "{}, grüß Gott, äh - Zeus! Was gibt's denn Neu's?",
     ];
 
-    if let Some(s) = PATS.iter().choose(&mut thread_rng()) {
-        return s.to_string().replace("{}", nick);
-    }
-
-    String::from("Hey ") + nick
+    let s = PATS[gen_index(&mut tls_rng(), PATS.len())];
+    s.to_string().replace("{}", nick)
 }
 
 pub(crate) fn nag_user(nick: &str) -> String {
@@ -134,13 +130,28 @@ pub(crate) fn nag_user(nick: &str) -> String {
             error!("Could not open nag-file '{}'", &nag_file);
             e
         })?;
-        let br = BufReader::new(f);
-        let l = br.lines();
-        let m = l
-            .choose(&mut thread_rng())
-            .unwrap_or_else(|| Ok("...".to_string()))?;
+        let mut l = String::new();
+        let _n = BufReader::new(f).read_to_string(&mut l)?;
+        let l = l.lines().collect::<Vec<_>>();
+        dbg!(&l);
+        let i = gen_index(&mut tls_rng(), l.len());
+        dbg!(i);
+        let m = l[i];
         Ok(format!("Hey {}, {}", nick, m))
     }
 
     doit(nick).unwrap_or_else(|_| format!("Hey {}", nick))
+}
+
+// This is straight from crate rand
+// Sample a number uniformly between 0 and `ubound`. Uses 32-bit sampling where
+// possible, primarily in order to produce the same output on 32-bit and 64-bit
+// platforms.
+#[inline]
+fn gen_index<R: Rng<8> + ?Sized>(rng: &mut R, ubound: usize) -> usize {
+    if ubound <= (core::u32::MAX as usize) {
+        rng.generate_range(0..ubound as u32) as usize
+    } else {
+        rng.generate_range(0..ubound)
+    }
 }

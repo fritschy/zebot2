@@ -60,7 +60,7 @@ impl Settings {
     fn get_extra(&self, key: &str) -> Option<&str> {
         self.extra_opts
             .iter()
-            .filter_map(|e| e.strip_prefix(key).map(|x| x.strip_prefix('=')).flatten())
+            .filter_map(|e| e.strip_prefix(key).and_then(|x| x.strip_prefix('=')))
             .next()
     }
 }
