@@ -439,11 +439,6 @@ impl Control {
                 .await
                 .map(|_| HandlerResult::Handled);
             }
-            "!nag" => {
-                return self.message(dst, &nag_user(&msg.get_nick()))
-                    .await
-                    .map(|_| HandlerResult::Handled);
-            }
             "!echo" => {
                 let m = &msg.params[1];
                 if m.len() > 6 {
