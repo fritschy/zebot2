@@ -131,7 +131,7 @@ pub(crate) fn nag_user(nick: &str) -> String {
             e
         })?;
         let mut l = String::new();
-        if let Ok(n) = BufReader::new(f).read_to_string(&mut l) {
+        if let Ok(_n) = BufReader::new(f).read_to_string(&mut l) {
             let l = l.lines().collect::<Vec<_>>();
             if !l.is_empty() {
                 let m = l[gen_index(&mut tls_rng(), l.len())];

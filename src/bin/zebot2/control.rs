@@ -783,9 +783,10 @@ pub(crate) async fn task(
             });
         }
 
-        tokio::select! {
-            msg = recv.recv() => {
-                if let Some(msg) = &msg {
+        // paste this code in their respective places below
+        macro_rules! handle_recv {
+            ($e:expr) => {
+                if let Some(msg) = &$e {
                     match msg {
                         ControlCommand::Irc(msg) => if let Err(e) = client.handle_irc_command(msg, send.clone()).await {
                             error!("Client side error: {e:?}");
@@ -799,30 +800,40 @@ pub(crate) async fn task(
                     }
                 }
             }
+        }
 
-            n = stdin.read_line(&mut line) => {
-                match n {
-                    Err(_) => {
-                        warn!("Error reading from stdin... quitting");
-                        send.send(ClientCommand::Quit).await?;
-                        return Ok(());
-                    }
-                    Ok(n) if n == 0 => {
-                        warn!("Got EOF... quitting");
-                        send.send(ClientCommand::Quit).await?;
-                        break;
-                    }
-                    Ok(_) => (),
+        if settings.no_stdin {
+            handle_recv!(recv.recv().await);
+        } else {
+            tokio::select! {
+                msg = recv.recv() => {
+                    handle_recv!(msg);
                 }
 
-                let stripped = line.strip_suffix('\n').unwrap_or(&line);
+                n = stdin.read_line(&mut line) => {
+                    match n {
+                        Err(_) => {
+                            warn!("Error reading from stdin... quitting");
+                            send.send(ClientCommand::Quit).await?;
+                            return Ok(());
+                        }
+                        Ok(n) if n == 0 => {
+                            warn!("Got EOF... quitting");
+                            send.send(ClientCommand::Quit).await?;
+                            break;
+                        }
+                        Ok(_) => (),
+                    }
 
-                if stripped.starts_with('/') {
-                    client.handle_command(stripped).await?;
-                } else {
-                    send.send(ClientCommand::Message(settings.channels[0].clone(), stripped.to_string())).await?;
+                    let stripped = line.strip_suffix('\n').unwrap_or(&line);
+
+                    if stripped.starts_with('/') {
+                        client.handle_command(stripped).await?;
+                    } else {
+                        send.send(ClientCommand::Message(settings.channels[0].clone(), stripped.to_string())).await?;
+                    }
+                    line.clear();
                 }
-                line.clear();
             }
         }
     }

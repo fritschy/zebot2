@@ -44,8 +44,13 @@ struct Settings {
     #[clap(short = 'x', long = "extra")]
     extra_opts: Vec<String>,
 
+    /// Restart internally on error
     #[clap(short = 'R', long, parse(from_flag))]
     restart: bool,
+
+    /// Do not read from stdin, use e.g. when starting as a daemon
+    #[clap(short = 'N', long, parse(from_flag))]
+    no_stdin: bool,
 }
 
 fn validate_channel(arg: &str) -> Result<String, String> {
@@ -97,6 +102,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let args = Arc::new(args);
 
     info!("This is ZeBot2 {}", util::zebot_version());
+
+    if args.no_stdin {
+        info!("Running w/o support to read from stdin (-N)");
+    }
 
     if args.restart {
         loop {
