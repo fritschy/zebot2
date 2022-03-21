@@ -131,13 +131,14 @@ pub(crate) fn nag_user(nick: &str) -> String {
             e
         })?;
         let mut l = String::new();
-        let _n = BufReader::new(f).read_to_string(&mut l)?;
-        let l = l.lines().collect::<Vec<_>>();
-        dbg!(&l);
-        let i = gen_index(&mut tls_rng(), l.len());
-        dbg!(i);
-        let m = l[i];
-        Ok(format!("Hey {}, {}", nick, m))
+        if let Ok(n) = BufReader::new(f).read_to_string(&mut l) {
+            let l = l.lines().collect::<Vec<_>>();
+            if !l.is_empty() {
+                let m = l[gen_index(&mut tls_rng(), l.len())];
+                return Ok(format!("Hey {}, {}", nick, m));
+            }
+        }
+        Ok(format!("Hey {}", nick))
     }
 
     doit(nick).unwrap_or_else(|_| format!("Hey {}", nick))
