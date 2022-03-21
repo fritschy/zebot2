@@ -14,7 +14,7 @@ tracing-subscriber = { version = "0.3.9", default-features = false, features = [
 tokio-rustls = { version = "0.23.3" }
 webpki-roots = { version = "0.22.2" }
 regex = "1.5.4"
-leaky-bucket-lite = { version = "0.5.2", features = ["tokio", "parking_lot"], default-features = false }
+leaky-bucket-lite = { version = "0.5.2", features = ["tokio"], default-features = false }
 json = "0.12"
 textwrap = "0.14"
 url = "2.2"
