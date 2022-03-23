@@ -77,8 +77,8 @@ async fn sock_send<T: AsyncWriteExt + Unpin>(
 }
 
 pub(crate) async fn task(
-    mut recv: Receiver<ClientCommand>,
-    send: Sender<ControlCommand>,
+    mut cmd: Receiver<ClientCommand>,
+    ctrl: Sender<ControlCommand>,
     settings: Arc<Settings>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut sock = connect_tls(&settings).await?;
@@ -97,7 +97,7 @@ pub(crate) async fn task(
 
     while retries > 0 {
         tokio::select! {
-            msg = recv.recv() => {
+            msg = cmd.recv() => {
                 if msg.is_none() {
                     continue;
                 }
@@ -106,7 +106,7 @@ pub(crate) async fn task(
                 match msg {
                     ClientCommand::Quit => {
                         info!("Got quit message ...");
-                        send.send(ControlCommand::ServerQuit("Received QUIT".to_string())).await?;
+                        ctrl.send(ControlCommand::ServerQuit("Received QUIT".to_string())).await?;
                         sock_send(&mut sock, &mut send_rate_limit, "QUIT :Need to restart the distributed real-time Java cluster VM\r\n").await?;
                         break;
                     }
@@ -136,7 +136,7 @@ pub(crate) async fn task(
             n = tokio::time::timeout(Duration::from_secs(settings.server_timeout), bufs.read_from(&mut sock)) => {
                 let n = match n {
                     Err(_) => {
-                        send.send(ControlCommand::ServerQuit("timeout".to_string())).await?;
+                        ctrl.send(ControlCommand::ServerQuit("timeout".to_string())).await?;
                         return Err(Box::new(io::Error::new(io::ErrorKind::Other, "timeout")));
                     }
                     Ok(n) => n?,
@@ -174,20 +174,20 @@ pub(crate) async fn task(
                                 }
                                 Error => {
                                     error!("Error from server: {msg}");
-                                    send.send(ControlCommand::ServerQuit("Received ERROR from server".to_string())).await?;
+                                    ctrl.send(ControlCommand::ServerQuit("Received ERROR from server".to_string())).await?;
                                     return Err(Box::new(io::Error::new(io::ErrorKind::Other, "IRC Error from Server")));
                                 }
                                 _ => (),
                             }
 
                             // Forward IRC message to control for handling
-                            send.send(ControlCommand::Irc(msg.clone())).await?;
+                            ctrl.send(ControlCommand::Irc(msg.clone())).await?;
                         }
 
                         Err(e) if parse_retry => {
                             // This one is fatal, we ran into parse errors a couple of times...
                             error!("Encountered an error from parser: {e:?}");
-                            send.send(ControlCommand::ServerQuit("Parse error".to_string())).await?;
+                            ctrl.send(ControlCommand::ServerQuit("Parse error".to_string())).await?;
                             return Err(Box::new(io::Error::new(io::ErrorKind::Other, "IRC parse error")));
                         }
 

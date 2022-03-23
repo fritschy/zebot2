@@ -127,5 +127,5 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         startup(args).await?;
     }
 
-    std::process::exit(0);
+    Ok(())
 }
