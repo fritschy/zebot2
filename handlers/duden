@@ -12,8 +12,16 @@ from urllib.request import urlopen, quote as urlquote
 #args = "".join(filter(lambda x: x.isalpha(), args))
 
 url = "https://www.duden.de/suchen/dudenonline/{}".format(urlquote(args))
-with urlopen(url) as r:
-    d = r.read()
+try:
+    with urlopen(url) as r:
+        d = r.read()
+except:
+    import sys
+    e = sys.exc_info()
+    lines = ["Duden returned error {} for search '{}'".format(e[1].status, args)]
+    if e[1].status == 404:
+        lines = ["Duden cannot find '{}': {}".format(args, url)]
+    handler_exit(0, lines=lines)
 
 from bs4 import BeautifulSoup as BS
 
