@@ -288,7 +288,7 @@ async fn youtube_title(
     client: Sender<ClientCommand>,
     settings: Arc<Settings>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let yt_re = regex::Regex::new(r"https?://((www.)?youtube\.com/watch|youtu.be/)").unwrap();
+    let yt_re = regex::Regex::new(r"https?://((m\.|www\.)?youtube\.com/watch|youtu.be/)").unwrap();
     for url in text
         .split_ascii_whitespace()
         .filter(|&x| x.starts_with("https://") || x.starts_with("http://"))
