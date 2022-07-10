@@ -390,15 +390,17 @@ impl Control {
         let mut u = self.startup.elapsed().as_secs();
         let mut r = String::new();
 
+        use std::fmt::Write as _;
+
         if u >= 3600 * 24 * 365 {
             let y = u / (3600 * 24 * 365);
-            r += &format!("{}y ", y);
+            write!(r, "{}y", y)?;
             u -= y * 3600 * 24 * 365;
         }
 
         if u >= 3600 * 24 {
             let d = u / (3600 * 24);
-            r += &format!("{}d ", d);
+            write!(r, "{}d", d)?;
             u -= d * 3600 * 24;
         }
 
@@ -408,7 +410,7 @@ impl Control {
         let m = u / 60;
         u -= m * 60;
 
-        r += &format!("{:02}:{:02}:{:02} uptime", h, m, u);
+        write!(r, "{:02}:{:02}:{:02} uptime", h, m, u)?;
 
         self.message(dst, &r).await?;
 
