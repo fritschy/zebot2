@@ -552,6 +552,31 @@ impl Control {
         Ok(false)
     }
 
+    async fn handle_japanese_text(&mut self, msg: &Message, text: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // https://translate.google.com/?sl=ja&tl=de&text=+%E5%91%8A%E7%99%BD%E3%82%BF%E3%82%A4%E3%83%A0&op=translate
+
+        // split into words, normalize them a little
+        let words = text
+            .split_whitespace()
+            .map(|n| n.trim_matches(|x:char| x.is_ascii_punctuation() || x.is_numeric()))
+            .collect::<Vec<_>>();
+
+        for word in words.iter() {
+            if word.chars().all(|x| {
+                let x = x as u32;
+                (0x4e00..=0x9fbf).contains(&x) ||
+                (0x3040..=0x309f).contains(&x) ||
+                (0x30a0..=0x30ff).contains(&x)
+            }) && word.len() > 0 {
+                self.message(&msg.get_reponse_destination(&self.settings.channels),
+                             &format!("translate {} here: https://translate.google.com/?sl=ja&tl=en&text={}&op=translate",
+                                      &word, urlencoding::encode(word))).await?;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn handle_privmsg(
         &mut self,
         msg: &irc2::Message,
@@ -576,6 +601,8 @@ impl Control {
         if self.handle_good_bot(msg, text).await? {
             return Ok(HandlerResult::NotInterested);
         }
+
+        self.handle_japanese_text(msg, text).await?;
 
         spawn(youtube_title(
             dst.clone(),
