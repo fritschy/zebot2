@@ -26,5 +26,5 @@ nanorand = { version = "0.7", features = ["getrandom", "rdseed", "wyrand", "tls"
 # html5gum = "0.4.0"
 
 [profile.release]
-lto = true
-codegen-units = 1
+#lto = true
+#codegen-units = 1
