@@ -501,6 +501,27 @@ impl Control {
         Ok(HandlerResult::Handled)
     }
 
+    // Handle a "good bot" message
+    async fn handle_good_bot(&mut self, msg: &Message, text: &str) -> Result<bool, Box<dyn Error + Send + Sync>> {
+        const REPLIES: &[&str] = &["why, thank you!", "thank you", "thx m8!", "you're welcome", "don't mention it!", "irgendwas kann jeder!!2"];
+        if text.to_lowercase()
+            // and trim punctuation and numerics
+            .trim_end_matches(|x: char| x.is_ascii_punctuation() || x.is_numeric())
+            // split words
+            .split_whitespace()
+            // Strip "zebot: "
+            .skip_while(|n| n.trim_end_matches(|x:char| x.is_ascii_punctuation()) == &self.settings.nickname.to_lowercase())
+            // Take only two words
+            .take(2)
+            // compare the two words
+            .collect::<Vec<_>>() == ["good", "bot"] {
+            // answer courteously
+            self.message(&msg.get_reponse_destination(&self.settings.channels), &format!("{}: {}", msg.get_nick(), REPLIES[tls_rng().generate::<usize>() % REPLIES.len()])).await?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     async fn handle_privmsg(
         &mut self,
         msg: &irc2::Message,
@@ -521,6 +542,10 @@ impl Control {
         }
 
         let text = &args[1];
+
+        if self.handle_good_bot(msg, text).await? {
+            return Ok(HandlerResult::NotInterested);
+        }
 
         spawn(youtube_title(
             dst.clone(),
