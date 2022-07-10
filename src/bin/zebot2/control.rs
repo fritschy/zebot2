@@ -7,6 +7,7 @@ use std::error::Error;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use regex::Regex;
 use textwrap::WordSplitter::NoHyphenation;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
@@ -501,24 +502,53 @@ impl Control {
         Ok(HandlerResult::Handled)
     }
 
-    // Handle a "good bot" message
+    // Handle a "good bot" message, let's not talk about efficiency here...
     async fn handle_good_bot(&mut self, msg: &Message, text: &str) -> Result<bool, Box<dyn Error + Send + Sync>> {
-        const REPLIES: &[&str] = &["why, thank you!", "thank you", "thx m8!", "you're welcome", "don't mention it!", "irgendwas kann jeder!!2"];
-        if text.to_lowercase()
-            // and trim punctuation and numerics
-            .trim_end_matches(|x: char| x.is_ascii_punctuation() || x.is_numeric())
-            // split words
+        const REPLIES: &[&str] = &[
+            "why, thank you!",
+            "thank you",
+            "thx(r)[TM] m8!",
+            "you're welcome",
+            "don't mention it!",
+            "irgendwas kann jeder!!2"
+        ];
+
+        let text = text.to_lowercase();
+
+        // split into words, normalize them a little
+        let words = text
             .split_whitespace()
-            // Strip "zebot: "
-            .skip_while(|n| n.trim_end_matches(|x:char| x.is_ascii_punctuation()) == &self.settings.nickname.to_lowercase())
-            // Take only two words
-            .take(2)
-            // compare the two words
-            .collect::<Vec<_>>() == ["good", "bot"] {
+            .map(|n| n.trim_end_matches(|x:char| x.is_ascii_punctuation() || x.is_numeric()))
+            .collect::<Vec<_>>();
+
+        // Oh, well this sucks!
+        const GS: &str = "gŋ";
+        const OS: &str = "öoø0°";
+        const US: &str = "uüµw";
+        const DS: &str = "dđðtŧ";
+        const ES: &str = "æ€eäa@r";
+
+        const BS: &str = "bþß";
+        const TS: &str = "tŧ";
+        const YS: &str = "yi¥";
+
+        let good_re = Regex::new(&format!("[{}]+([{}]+|[{}]+|[{}{}]+)[{}]+[{}]+", GS, US, OS, OS, ES, DS, ES)).unwrap();
+        let bot_re = Regex::new(&format!("[{}]+[{}]+[{}]+", BS, OS, TS)).unwrap();
+        let boy_re = Regex::new(&format!("[{}]+[{}]+[{}]+", BS, OS, YS)).unwrap();
+
+        // for each pairs of words try to find any match
+        if words.windows(2).any(|words| {
+                [&good_re, &bot_re].into_iter()
+                    .zip([&good_re, &boy_re])
+                    .zip(words)
+                    .all(|((re1, re2), word)| re1.is_match(word) || re2.is_match(word))
+            })
+        {
             // answer courteously
             self.message(&msg.get_reponse_destination(&self.settings.channels), &format!("{}: {}", msg.get_nick(), REPLIES[tls_rng().generate::<usize>() % REPLIES.len()])).await?;
             return Ok(true);
         }
+
         Ok(false)
     }
 
