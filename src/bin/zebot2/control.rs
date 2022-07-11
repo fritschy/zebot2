@@ -521,6 +521,13 @@ impl Control {
             .map(|n| n.trim_end_matches(|x:char| x.is_ascii_punctuation() || x.is_numeric()))
             .collect::<Vec<_>>();
 
+        // there may be more of these special cases ...
+        // Good boy
+        if words.iter().any(|f| *f == "いい子") {
+            self.message(&msg.get_reponse_destination(&self.settings.channels), &format!("{}: {}", msg.get_nick(), REPLIES[tls_rng().generate::<usize>() % REPLIES.len()])).await?;
+            return Ok(true);
+        }
+
         // Oh, well this sucks!
         const GS: &str = "gŋ";
         const OS: &str = "öoø0°";
@@ -532,7 +539,7 @@ impl Control {
         const TS: &str = "tŧ";
         const YS: &str = "yi¥";
 
-        let good_re = Regex::new(&format!("[{}]+([{}]+|[{}]+|[{}{}]+)[{}]+[{}]+", GS, US, OS, OS, ES, DS, ES)).unwrap();
+        let good_re = Regex::new(&format!("[{}]+([{}]+|[{}]+|[{}{}]+)[{}]+([{}]+)?", GS, US, OS, OS, ES, DS, ES)).unwrap();
         let bot_re = Regex::new(&format!("[{}]+[{}]+[{}]+", BS, OS, TS)).unwrap();
         let boy_re = Regex::new(&format!("[{}]+[{}]+[{}]+", BS, OS, YS)).unwrap();
 
