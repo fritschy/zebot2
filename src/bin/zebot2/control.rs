@@ -510,6 +510,7 @@ impl Control {
             "thx(r)[TM] m8!",
             "you're welcome",
             "don't mention it!",
+            "sod off...!",
             "irgendwas kann jeder!!2"
         ];
 
@@ -521,9 +522,11 @@ impl Control {
             .map(|n| n.trim_end_matches(|x:char| x.is_ascii_punctuation() || x.is_numeric()))
             .collect::<Vec<_>>();
 
+        const atta_x: &[&str] = &["attaboi", "attaboy", "attagirl", "attadog"];
+
         // there may be more of these special cases ...
         // Good boy
-        if words.iter().any(|f| *f == "いい子") {
+        if words.iter().any(|f| *f == "いい子" || atta_x.contains(&f)) {
             self.message(&msg.get_reponse_destination(&self.settings.channels), &format!("{}: {}", msg.get_nick(), REPLIES[tls_rng().generate::<usize>() % REPLIES.len()])).await?;
             return Ok(true);
         }
