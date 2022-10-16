@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
-use tokio::spawn;
 use tokio::sync::mpsc::channel;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -105,8 +104,6 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let args = Arc::new(args);
 
     if args.tokio_console {
-        use std::time::Duration;
-
         let port = if let Some(port) = std::env::var("TOKIO_CONSOLE_PORT")
             .ok().and_then(|x| x.parse::<u16>().ok()) {
             port
