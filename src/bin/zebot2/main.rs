@@ -74,15 +74,15 @@ impl Settings {
 }
 
 async fn startup(args: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let (control_send, client_recv) = channel(16);
-    let (client_send, control_recv) = channel(16);
+    let (control_send, client_recv) = channel(256);
+    let (client_send, control_recv) = channel(256);
 
-    let cl = spawn(client::task(client_recv, client_send.clone(), args.clone()));
-    let ctrl = spawn(control::task(
+    let cl = tokio::task::Builder::new().name("client").spawn(client::task(client_recv, client_send.clone(), args.clone()))?;
+    let ctrl = tokio::task::Builder::new().name("control").spawn(control::task(
         control_recv,
         control_send.clone(),
         args.clone(),
-    ));
+    ))?;
 
     tokio::select! {
         e = cl => { e??; }
