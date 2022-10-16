@@ -51,6 +51,9 @@ struct Settings {
     /// Do not read from stdin, use e.g. when starting as a daemon
     #[clap(short = 'N', long, parse(from_flag))]
     no_stdin: bool,
+
+    #[clap(long = "tokio-console", parse(from_flag))]
+    tokio_console: bool,
 }
 
 fn validate_channel(arg: &str) -> Result<String, String> {
@@ -98,15 +101,31 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let my_subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::INFO)
-        .with_thread_ids(false)
-        .with_thread_names(false)
-        .finish();
-    tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
-
     let args = Settings::parse();
     let args = Arc::new(args);
+
+    if args.tokio_console {
+        use std::time::Duration;
+
+        let port = if let Some(port) = std::env::var("TOKIO_CONSOLE_PORT")
+            .ok().and_then(|x| x.parse::<u16>().ok()) {
+            port
+        } else {
+            5555
+        };
+
+        console_subscriber::ConsoleLayer::builder()
+            .retention(Duration::from_secs(60))
+            .server_addr(([127, 0, 0, 1], port))
+            .init();
+    } else {
+        let my_subscriber = tracing_subscriber::FmtSubscriber::builder()
+            .with_max_level(tracing::Level::INFO)
+            .with_thread_ids(false)
+            .with_thread_names(false)
+            .finish();
+        tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
+    }
 
     info!("This is ZeBot2 {}", util::zebot_version());
 
