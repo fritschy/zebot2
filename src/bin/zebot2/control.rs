@@ -344,7 +344,7 @@ async fn youtube_title(
     Ok(())
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum HandlerResult {
     Handled,
     NotInterested,
@@ -522,11 +522,11 @@ impl Control {
             .map(|n| n.trim_end_matches(|x:char| x.is_ascii_punctuation() || x.is_numeric()))
             .collect::<Vec<_>>();
 
-        const atta_x: &[&str] = &["attaboi", "attaboy", "attagirl", "attadog"];
+        const ATTA_X: &[&str] = &["attaboi", "attaboy", "attagirl", "attadog"];
 
         // there may be more of these special cases ...
         // Good boy
-        if words.iter().any(|f| *f == "いい子" || atta_x.contains(&f)) {
+        if words.iter().any(|f| *f == "いい子" || ATTA_X.contains(f)) {
             self.message(&msg.get_reponse_destination(&self.settings.channels), &format!("{}: {}", msg.get_nick(), REPLIES[tls_rng().generate::<usize>() % REPLIES.len()])).await?;
             return Ok(true);
         }
@@ -577,7 +577,7 @@ impl Control {
                 (0x4e00..=0x9fbf).contains(&x) ||
                 (0x3040..=0x309f).contains(&x) ||
                 (0x30a0..=0x30ff).contains(&x)
-            }) && word.len() > 0 {
+            }) && !word.is_empty() {
                 self.message(&msg.get_reponse_destination(&self.settings.channels),
                              &format!("translate {} here: https://translate.google.com/?sl=ja&tl=en&text={}&op=translate",
                                       &word, urlencoding::encode(word))).await?;
