@@ -97,7 +97,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .enable_io()
         .enable_time()
         .build()?
-        .block_on(async { async_main().await })
+        .block_on(async_main())
 }
 
 async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
