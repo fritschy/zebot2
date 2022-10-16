@@ -11,8 +11,8 @@ use regex::Regex;
 use textwrap::WordSplitter::NoHyphenation;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::spawn;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::task::Builder;
 use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 use url::Url;
@@ -112,7 +112,7 @@ async fn callout(
 
     info!("callout args={args:?}");
 
-    spawn(async move {
+    tokio::task::Builder::new().name("callout").spawn(async move {
         async fn wrapper(
             msg: Message,
             command: String,
@@ -278,7 +278,7 @@ async fn callout(
         if let Err(e) = wrapper(msg, command, path, args, settings, client).await {
             error!("Callout errored: {e:?}");
         }
-    });
+    })?;
 
     Ok(HandlerResult::Handled)
 }
@@ -614,12 +614,12 @@ impl Control {
 
         self.handle_japanese_text(msg, text).await?;
 
-        spawn(youtube_title(
+        Builder::new().name("yt-title").spawn(youtube_title(
             dst.clone(),
             text.clone(),
             self.client.clone(),
             self.settings.clone(),
-        ));
+        ))?;
 
         url_saver(msg, self.settings.clone()).await?;
 
