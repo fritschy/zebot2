@@ -4,8 +4,10 @@ use irc2::{Message, Prefix};
 use nanorand::{Rng, tls_rng};
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
+use std::os::unix::prelude::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use regex::Regex;
 use textwrap::WordSplitter::NoHyphenation;
@@ -88,13 +90,22 @@ async fn callout(
 
     let path = format!("./handlers/{}", command);
 
-    if !Path::new(&path).exists() {
-        return Ok(HandlerResult::NotInterested);
+    {
+        let path = Path::new(&path);
+
+        static ATOMIC_ID: AtomicUsize = AtomicUsize::new(1);
+        let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
+
+        // Let's cheat a little ...
+        if !(path.exists() && path.metadata()?.permissions().mode() & 0o111 != 0) {
+            let dst = msg.get_reponse_destination(&settings.channels);
+            client.send(ClientCommand::Message(dst, format!("/bin/sh: {}: {}: not found", id, &command))).await?;
+            return Ok(HandlerResult::NotInterested);
+        }
     }
 
     let nick = msg.get_nick();
-    let mut args = msg.params.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-    args.insert(0, nick); // this sucks
+    let args = [nick].into_iter().chain(msg.params.iter().map(|x| x.to_string())).collect::<Vec<_>>();
 
     // Handler args look like this:
     // $srcnick $src(chan,query) "!command[ ...args]"
@@ -116,7 +127,7 @@ async fn callout(
         async fn wrapper(
             msg: Message,
             command: String,
-            path: String,
+            path: impl AsRef<Path>,
             args: Vec<String>,
             settings: Arc<Settings>,
             send: Sender<ClientCommand>,
@@ -124,7 +135,7 @@ async fn callout(
             let s = Instant::now();
             let cmd = timeout(
                 Duration::from_secs(30),
-                Command::new(path).args(&args).output(),
+                Command::new(path.as_ref()).args(&args).output(),
             )
             .await;
 
@@ -291,7 +302,7 @@ async fn youtube_title(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let yt_re = regex::Regex::new(r"https?://((m\.|www\.)?youtube\.com/watch|youtu.be/)").unwrap();
     for url in text
-        .split_ascii_whitespace()
+        .split_whitespace()
         .filter(|&x| x.starts_with("https://") || x.starts_with("http://"))
     {
         if yt_re.is_match(url) {
