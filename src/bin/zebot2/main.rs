@@ -36,7 +36,7 @@ struct Settings {
     channels: Vec<String>,
 
     /// Server ping timeout
-    #[clap(short = 't', long, default_value_t = 5*60)]
+    #[clap(short = 't', long, default_value_t = 3*60)]
     server_timeout: u64,
 
     /// Extra options e.g. -x youtube_dl=$PWD/youtube-dl
