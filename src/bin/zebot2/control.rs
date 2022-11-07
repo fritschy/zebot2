@@ -336,7 +336,7 @@ async fn youtube_title(
                 .unwrap_or("youtube_dl");
 
             if let Ok(output) = cmd_builder
-                .args(&[
+                .args([
                     "-m",
                     module,
                     "--quiet",
@@ -999,7 +999,7 @@ pub(crate) async fn task(
                             break;
                         }
                         Ok(_) => {
-                            line += &String::from_utf8_lossy(&vline).to_string();
+                            line += &String::from_utf8_lossy(&vline);
                         },
                     }
 
