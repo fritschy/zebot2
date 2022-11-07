@@ -127,7 +127,9 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     if args.tokio_console {
         let port = if let Some(port) = std::env::var("TOKIO_CONSOLE_PORT")
-            .ok().and_then(|x| x.parse::<u16>().ok()) {
+            .ok()
+            .and_then(|x| x.parse::<u16>().ok())
+        {
             port
         } else {
             5555
@@ -143,7 +145,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             .with_thread_ids(false)
             .with_thread_names(false)
             .finish();
-        tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
+        tracing::subscriber::set_global_default(my_subscriber)
+            .expect("setting tracing default failed");
     }
 
     info!("This is ZeBot2 {}", util::zebot_version());

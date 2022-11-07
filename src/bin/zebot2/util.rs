@@ -1,5 +1,5 @@
 use json::JsonValue;
-use nanorand::{Rng, tls_rng};
+use nanorand::{tls_rng, Rng};
 use std::fmt::Display;
 use std::io;
 use std::io::{BufReader, Read};

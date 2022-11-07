@@ -1,15 +1,15 @@
 use chrono::Local;
 use irc2::command::CommandCode;
 use irc2::{Message, Prefix};
-use nanorand::{Rng, tls_rng};
+use nanorand::{tls_rng, Rng};
+use regex::Regex;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::os::unix::prelude::PermissionsExt;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use regex::Regex;
 use textwrap::WordSplitter::NoHyphenation;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
@@ -99,13 +99,21 @@ async fn callout(
         // Let's cheat a little ...
         if !(path.exists() && path.metadata()?.permissions().mode() & 0o111 != 0) {
             let dst = msg.get_reponse_destination(&settings.channels);
-            client.send(ClientCommand::Message(dst, format!("/bin/sh: {}: {}: not found", id, &command))).await?;
+            client
+                .send(ClientCommand::Message(
+                    dst,
+                    format!("/bin/sh: {}: {}: not found", id, &command),
+                ))
+                .await?;
             return Ok(HandlerResult::NotInterested);
         }
     }
 
     let nick = msg.get_nick();
-    let args = [nick].into_iter().chain(msg.params.iter().map(|x| x.to_string())).collect::<Vec<_>>();
+    let args = [nick]
+        .into_iter()
+        .chain(msg.params.iter().map(|x| x.to_string()))
+        .collect::<Vec<_>>();
 
     // Handler args look like this:
     // $srcnick $src(chan,query) "!command[ ...args]"
@@ -123,173 +131,185 @@ async fn callout(
 
     info!("callout args={args:?}");
 
-    tokio::task::Builder::new().name("callout").spawn(async move {
-        async fn wrapper(
-            msg: Message,
-            command: String,
-            path: impl AsRef<Path>,
-            args: Vec<String>,
-            settings: Arc<Settings>,
-            send: Sender<ClientCommand>,
-        ) -> Result<(), Box<dyn Error + Send + Sync>> {
-            let s = Instant::now();
-            let cmd = timeout(
-                Duration::from_secs(30),
-                Command::new(path.as_ref()).args(&args).output(),
-            )
-            .await;
+    tokio::task::Builder::new()
+        .name("callout")
+        .spawn(async move {
+            async fn wrapper(
+                msg: Message,
+                command: String,
+                path: impl AsRef<Path>,
+                args: Vec<String>,
+                settings: Arc<Settings>,
+                send: Sender<ClientCommand>,
+            ) -> Result<(), Box<dyn Error + Send + Sync>> {
+                let s = Instant::now();
+                let cmd = timeout(
+                    Duration::from_secs(30),
+                    Command::new(path.as_ref()).args(&args).output(),
+                )
+                .await;
 
-            let s = s.elapsed();
+                let s = s.elapsed();
 
-            let dst = msg.get_reponse_destination(&settings.channels);
+                let dst = msg.get_reponse_destination(&settings.channels);
 
-            if let Err(e) = cmd {
-                warn!("Handler timed out: {e:}");
-                send.send(ClientCommand::Message(
-                    dst,
-                    "Handler timed out".to_string(),
-                ))
-                .await?;
-                return Ok(());
-            }
-            let cmd = cmd.unwrap();
-
-            info!("Handler {} completed in {:?}", command, s);
-
-            match cmd {
-                Ok(p) => {
-                    if !p.status.success() {
-                        error!("Handler failed with code {}: {p:?}", p.status.code().unwrap());
-                        send.send(ClientCommand::Message(
-                            dst,
-                            "Somehow, that did not work...".to_string(),
-                        ))
+                if let Err(e) = cmd {
+                    warn!("Handler timed out: {e:}");
+                    send.send(ClientCommand::Message(dst, "Handler timed out".to_string()))
                         .await?;
-                        return Ok(());
-                    }
+                    return Ok(());
+                }
+                let cmd = cmd.unwrap();
 
-                    if let Ok(response) = String::from_utf8(p.stdout) {
-                        match json::parse(&response) {
-                            Ok(response) => {
-                                if let Some(raw) = response["raw"].as_str() {
-                                    send.send(ClientCommand::RawMessage(raw.to_string())).await?;
-                                    return Ok(());
-                                }
+                info!("Handler {} completed in {:?}", command, s);
 
-                                let dst = if let Some(dst) = response["dst"].as_str() {
-                                    dst.to_string()
-                                } else {
-                                    dst
-                                };
+                match cmd {
+                    Ok(p) => {
+                        if !p.status.success() {
+                            error!(
+                                "Handler failed with code {}: {p:?}",
+                                p.status.code().unwrap()
+                            );
+                            send.send(ClientCommand::Message(
+                                dst,
+                                "Somehow, that did not work...".to_string(),
+                            ))
+                            .await?;
+                            return Ok(());
+                        }
 
-                                const KNOWN_FIELDS: &[&str] = &[ "lines", "dst", "box", "wrap", "wrap_single_lines", "title", "link" ];
+                        if let Ok(response) = String::from_utf8(p.stdout) {
+                            match json::parse(&response) {
+                                Ok(response) => {
+                                    if let Some(raw) = response["raw"].as_str() {
+                                        send.send(ClientCommand::RawMessage(raw.to_string()))
+                                            .await?;
+                                        return Ok(());
+                                    }
 
-                                if response.entries().any(|(k, _)| ! KNOWN_FIELDS.contains(&k)) {
-                                    warn!("Handler response contains unknown fields!");
-                                }
+                                    let dst = if let Some(dst) = response["dst"].as_str() {
+                                        dst.to_string()
+                                    } else {
+                                        dst
+                                    };
 
-                                debug!("Response={response:?}");
+                                    const KNOWN_FIELDS: &[&str] = &[
+                                        "lines",
+                                        "dst",
+                                        "box",
+                                        "wrap",
+                                        "wrap_single_lines",
+                                        "title",
+                                        "link",
+                                    ];
 
-                                if let Some(error) = response["error"].as_str() {
-                                    send.send(ClientCommand::Message(
-                                        dst,
-                                        format!("Handler returned an error: {}", error),
-                                    ))
-                                    .await?;
-                                    return Ok(());
-                                } else if !is_json_flag_set(&response["box"]) {
-                                    for l in response["lines"].members() {
+                                    if response.entries().any(|(k, _)| !KNOWN_FIELDS.contains(&k)) {
+                                        warn!("Handler response contains unknown fields!");
+                                    }
+
+                                    debug!("Response={response:?}");
+
+                                    if let Some(error) = response["error"].as_str() {
                                         send.send(ClientCommand::Message(
-                                            dst.clone(),
-                                            l.to_string(),
+                                            dst,
+                                            format!("Handler returned an error: {}", error),
                                         ))
                                         .await?;
-                                    }
-                                } else {
-                                    let lines = response["lines"]
-                                        .members()
-                                        .map(|x| x.to_string())
-                                        .collect::<Vec<_>>();
-                                    let lines = if is_json_flag_set(&response["wrap"])
-                                        && lines.iter().any(|x| x.len() > 80)
-                                    {
-                                        let nlines = lines.len();
+                                        return Ok(());
+                                    } else if !is_json_flag_set(&response["box"]) {
+                                        for l in response["lines"].members() {
+                                            send.send(ClientCommand::Message(
+                                                dst.clone(),
+                                                l.to_string(),
+                                            ))
+                                            .await?;
+                                        }
+                                    } else {
+                                        let lines = response["lines"]
+                                            .members()
+                                            .map(|x| x.to_string())
+                                            .collect::<Vec<_>>();
+                                        let lines = if is_json_flag_set(&response["wrap"])
+                                            && lines.iter().any(|x| x.len() > 80)
+                                        {
+                                            let nlines = lines.len();
 
-                                        let s = if lines[nlines - 1].starts_with("    ") {
-                                            let (lines, last) = lines.split_at(nlines - 1);
+                                            let s = if lines[nlines - 1].starts_with("    ") {
+                                                let (lines, last) = lines.split_at(nlines - 1);
 
-                                            let s = lines.concat();
-                                            let s = textwrap::fill(&s, 80);
+                                                let s = lines.concat();
+                                                let s = textwrap::fill(&s, 80);
 
-                                            let s = s + "\n";
-                                            s + last[0].as_str()
+                                                let s = s + "\n";
+                                                s + last[0].as_str()
+                                            } else {
+                                                let s = lines.concat();
+                                                textwrap::fill(&s, 80)
+                                            };
+
+                                            s.split(|f| f == '\n')
+                                                .map(|x| x.to_string())
+                                                .collect::<Vec<_>>()
+                                        } else if is_json_flag_set(&response["wrap_single_lines"]) {
+                                            let mut new_lines = Vec::with_capacity(lines.len());
+                                            let opt = textwrap::Options::new(80)
+                                                .word_splitter(NoHyphenation)
+                                                .subsequent_indent("  ");
+                                            for l in lines {
+                                                new_lines.extend(
+                                                    textwrap::wrap(&l, &opt)
+                                                        .iter()
+                                                        .map(|x| x.to_string()),
+                                                );
+                                            }
+                                            new_lines
                                         } else {
-                                            let s = lines.concat();
-                                            textwrap::fill(&s, 80)
+                                            lines
                                         };
 
-                                        s.split(|f| f == '\n')
-                                            .map(|x| x.to_string())
-                                            .collect::<Vec<_>>()
-                                    } else if is_json_flag_set(&response["wrap_single_lines"]) {
-                                        let mut new_lines = Vec::with_capacity(lines.len());
-                                        let opt = textwrap::Options::new(80)
-                                            .word_splitter(NoHyphenation)
-                                            .subsequent_indent("  ");
-                                        for l in lines {
-                                            new_lines.extend(
-                                                textwrap::wrap(&l, &opt)
-                                                    .iter()
-                                                    .map(|x| x.to_string()),
-                                            );
+                                        // append link if provided
+                                        let lines = if let Some(s) = response["link"].as_str() {
+                                            let mut lines = lines;
+                                            lines.push(format!("    -- {}", s));
+                                            lines
+                                        } else {
+                                            lines
+                                        };
+
+                                        for i in text_box(lines.iter(), response["title"].as_str())
+                                        {
+                                            send.send(ClientCommand::Message(dst.clone(), i))
+                                                .await?;
                                         }
-                                        new_lines
-                                    } else {
-                                        lines
-                                    };
-
-                                    // append link if provided
-                                    let lines = if let Some(s) = response["link"].as_str() {
-                                        let mut lines = lines;
-                                        lines.push(format!("    -- {}", s));
-                                        lines
-                                    } else {
-                                        lines
-                                    };
-
-                                    for i in text_box(lines.iter(), response["title"].as_str()) {
-                                        send.send(ClientCommand::Message(dst.clone(), i))
-                                            .await?;
                                     }
                                 }
-                            }
 
-                            Err(e) => {
-                                // Perhaps have this as a fallback for non-json handlers? What could possibly go wrong!
-                                error!(
-                                    "Could not parse json from handler {}: {}",
-                                    command, response
-                                );
-                                error!("Error: {:?}", e);
+                                Err(e) => {
+                                    // Perhaps have this as a fallback for non-json handlers? What could possibly go wrong!
+                                    error!(
+                                        "Could not parse json from handler {}: {}",
+                                        command, response
+                                    );
+                                    error!("Error: {:?}", e);
+                                }
                             }
+                        } else {
+                            error!("Could not from_utf8 for handler {}", command);
                         }
-                    } else {
-                        error!("Could not from_utf8 for handler {}", command);
+                    }
+
+                    Err(e) => {
+                        error!("Could not execute handler: {:?}", e);
                     }
                 }
 
-                Err(e) => {
-                    error!("Could not execute handler: {:?}", e);
-                }
+                Ok(())
             }
 
-            Ok(())
-        }
-
-        if let Err(e) = wrapper(msg, command, path, args, settings, client).await {
-            error!("Callout errored: {e:?}");
-        }
-    })?;
+            if let Err(e) = wrapper(msg, command, path, args, settings, client).await {
+                error!("Callout errored: {e:?}");
+            }
+        })?;
 
     Ok(HandlerResult::Handled)
 }
@@ -331,19 +351,21 @@ async fn youtube_title(
                 let err = String::from_utf8_lossy(output.stderr.as_ref());
                 if !err.is_empty() {
                     error!("Got error from youtube-dl: {}", err);
-                    client.send(ClientCommand::Message(
-                        dst.to_string(),
-                        format!("Got an error for URL {}, is this a valid video URL?", &url),
-                    ))
-                    .await?;
+                    client
+                        .send(ClientCommand::Message(
+                            dst.to_string(),
+                            format!("Got an error for URL {}, is this a valid video URL?", &url),
+                        ))
+                        .await?;
                 } else {
                     let title = String::from_utf8_lossy(output.stdout.as_ref());
                     if !title.is_empty() {
-                        client.send(ClientCommand::Message(
-                            dst.to_string(),
-                            format!("{} has title '{}'", &url, title.trim()),
-                        ))
-                        .await?;
+                        client
+                            .send(ClientCommand::Message(
+                                dst.to_string(),
+                                format!("{} has title '{}'", &url, title.trim()),
+                            ))
+                            .await?;
                     }
                 }
             }
@@ -441,16 +463,17 @@ impl Control {
         match cmd {
             "!up" | "!uptime" => return self.handle_command_uptime(dst).await,
             "!ver" | "!version" => {
-                return self.message(
-                    dst,
-                    &format!(
-                        "I am {} version {}, let's not talk about it!",
-                        env!("CARGO_PKG_NAME"),
-                        zebot_version()
-                    ),
-                )
-                .await
-                .map(|_| HandlerResult::Handled);
+                return self
+                    .message(
+                        dst,
+                        &format!(
+                            "I am {} version {}, let's not talk about it!",
+                            env!("CARGO_PKG_NAME"),
+                            zebot_version()
+                        ),
+                    )
+                    .await
+                    .map(|_| HandlerResult::Handled);
             }
             "!echo" => {
                 let m = &msg.params[1];
@@ -463,18 +486,26 @@ impl Control {
             }
             "!exec" | "!sh" | "!shell" | "!powershell" | "!power-shell" => {
                 let m = format!("Na aber wer wird denn gleich, {}", msg.get_nick());
-                return self.message(dst, &m)
-                    .await
-                    .map(|_| HandlerResult::Handled);
+                return self.message(dst, &m).await.map(|_| HandlerResult::Handled);
             }
             "!ping" => {
                 let id: u64 = tls_rng().generate();
-                self.pings.insert(id, (msg.get_reponse_destination(&self.settings.channels), Instant::now()));
-                self.client.send(ClientCommand::RawMessage(format!("PING {id}\r\n"))).await?;
+                self.pings.insert(
+                    id,
+                    (
+                        msg.get_reponse_destination(&self.settings.channels),
+                        Instant::now(),
+                    ),
+                );
+                self.client
+                    .send(ClientCommand::RawMessage(format!("PING {id}\r\n")))
+                    .await?;
                 return Ok(HandlerResult::Handled);
             }
             _ => {
-                return_if_handled!(callout(msg.clone(), self.settings.clone(), self.client.clone()).await?)
+                return_if_handled!(
+                    callout(msg.clone(), self.settings.clone(), self.client.clone()).await?
+                )
             }
         }
 
@@ -514,7 +545,11 @@ impl Control {
     }
 
     // Handle a "good bot" message, let's not talk about efficiency here...
-    async fn handle_good_bot(&mut self, msg: &Message, text: &str) -> Result<bool, Box<dyn Error + Send + Sync>> {
+    async fn handle_good_bot(
+        &mut self,
+        msg: &Message,
+        text: &str,
+    ) -> Result<bool, Box<dyn Error + Send + Sync>> {
         const REPLIES: &[&str] = &[
             "why, thank you!",
             "thank you",
@@ -522,7 +557,7 @@ impl Control {
             "you're welcome",
             "don't mention it!",
             "sod off...!",
-            "irgendwas kann jeder!!2"
+            "irgendwas kann jeder!!2",
         ];
 
         let text = text.to_lowercase();
@@ -530,7 +565,7 @@ impl Control {
         // split into words, normalize them a little
         let words = text
             .split_whitespace()
-            .map(|n| n.trim_end_matches(|x:char| x.is_ascii_punctuation() || x.is_numeric()))
+            .map(|n| n.trim_end_matches(|x: char| x.is_ascii_punctuation() || x.is_numeric()))
             .collect::<Vec<_>>();
 
         const ATTA_X: &[&str] = &["attaboi", "attaboy", "attagirl", "attadog"];
@@ -538,7 +573,15 @@ impl Control {
         // there may be more of these special cases ...
         // Good boy
         if words.iter().any(|f| *f == "いい子" || ATTA_X.contains(f)) {
-            self.message(&msg.get_reponse_destination(&self.settings.channels), &format!("{}: {}", msg.get_nick(), REPLIES[tls_rng().generate::<usize>() % REPLIES.len()])).await?;
+            self.message(
+                &msg.get_reponse_destination(&self.settings.channels),
+                &format!(
+                    "{}: {}",
+                    msg.get_nick(),
+                    REPLIES[tls_rng().generate::<usize>() % REPLIES.len()]
+                ),
+            )
+            .await?;
             return Ok(true);
         }
 
@@ -553,42 +596,59 @@ impl Control {
         const TS: &str = "tŧ";
         const YS: &str = "yi¥";
 
-        let good_re = Regex::new(&format!("[{}]+([{}]+|[{}]+|[{}{}]+)[{}]+([{}]+)?", GS, US, OS, OS, ES, DS, ES)).unwrap();
+        let good_re = Regex::new(&format!(
+            "[{}]+([{}]+|[{}]+|[{}{}]+)[{}]+([{}]+)?",
+            GS, US, OS, OS, ES, DS, ES
+        ))
+        .unwrap();
         let bot_re = Regex::new(&format!("[{}]+[{}]+[{}]+", BS, OS, TS)).unwrap();
         let boy_re = Regex::new(&format!("[{}]+[{}]+[{}]+", BS, OS, YS)).unwrap();
 
         // for each pairs of words try to find any match
         if words.windows(2).any(|words| {
-                [&good_re, &bot_re].into_iter()
-                    .zip([&good_re, &boy_re])
-                    .zip(words)
-                    .all(|((re1, re2), word)| re1.is_match(word) || re2.is_match(word))
-            })
-        {
+            [&good_re, &bot_re]
+                .into_iter()
+                .zip([&good_re, &boy_re])
+                .zip(words)
+                .all(|((re1, re2), word)| re1.is_match(word) || re2.is_match(word))
+        }) {
             // answer courteously
-            self.message(&msg.get_reponse_destination(&self.settings.channels), &format!("{}: {}", msg.get_nick(), REPLIES[tls_rng().generate::<usize>() % REPLIES.len()])).await?;
+            self.message(
+                &msg.get_reponse_destination(&self.settings.channels),
+                &format!(
+                    "{}: {}",
+                    msg.get_nick(),
+                    REPLIES[tls_rng().generate::<usize>() % REPLIES.len()]
+                ),
+            )
+            .await?;
             return Ok(true);
         }
 
         Ok(false)
     }
 
-    async fn handle_japanese_text(&mut self, msg: &Message, text: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn handle_japanese_text(
+        &mut self,
+        msg: &Message,
+        text: &str,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // https://translate.google.com/?sl=ja&tl=de&text=+%E5%91%8A%E7%99%BD%E3%82%BF%E3%82%A4%E3%83%A0&op=translate
 
         // split into words, normalize them a little
         let words = text
             .split_whitespace()
-            .map(|n| n.trim_matches(|x:char| x.is_ascii_punctuation() || x.is_numeric()))
+            .map(|n| n.trim_matches(|x: char| x.is_ascii_punctuation() || x.is_numeric()))
             .collect::<Vec<_>>();
 
         for word in words.iter() {
             if word.chars().all(|x| {
                 let x = x as u32;
-                (0x4e00..=0x9fbf).contains(&x) ||
-                (0x3040..=0x309f).contains(&x) ||
-                (0x30a0..=0x30ff).contains(&x)
-            }) && !word.is_empty() {
+                (0x4e00..=0x9fbf).contains(&x)
+                    || (0x3040..=0x309f).contains(&x)
+                    || (0x30a0..=0x30ff).contains(&x)
+            }) && !word.is_empty()
+            {
                 self.message(&msg.get_reponse_destination(&self.settings.channels),
                              &format!("translate {} here: https://translate.google.com/?sl=ja&tl=en&text={}&op=translate",
                                       &word, urlencoding::encode(word))).await?;
@@ -639,15 +699,16 @@ impl Control {
         if text.starts_with('!') && text.len() > 1 && text.as_bytes()[1].is_ascii_alphanumeric() {
             let textv = text.split_ascii_whitespace().collect::<Vec<_>>();
             return_if_handled!(
-                self.handle_zebot_command(msg, &dst, text.as_str(), &textv[1..]).await?
+                self.handle_zebot_command(msg, &dst, text.as_str(), &textv[1..])
+                    .await?
             );
         }
 
         if text
-            .split(|c: char|
+            .split(|c: char| {
                 (c.is_whitespace() || c.is_ascii_punctuation())
                     && !self.settings.nickname.contains(c)
-            )
+            })
             .any(|w| w == self.settings.nickname)
         {
             return_if_handled!(self.zebot_answer(msg, &dst).await?);
@@ -705,14 +766,21 @@ impl Control {
         let cmd = &msg.command;
 
         match cmd {
-            CommandCode::Notice if argc == 2 && args[1].contains("Checking Ident") => self.logon().await?,
+            CommandCode::Notice if argc == 2 && args[1].contains("Checking Ident") => {
+                self.logon().await?
+            }
 
-            CommandCode::Notice if argc == 2 && args[1].contains("This nickname is registered.") => self.nickserv_identify().await?,
+            CommandCode::Notice
+                if argc == 2 && args[1].contains("This nickname is registered.") =>
+            {
+                self.nickserv_identify().await?
+            }
 
             CommandCode::Generic(code) if code == "PONG" && args.len() == 2 => {
                 if let Ok(pid) = args[1].parse::<u64>() {
                     if let Some((dst, t0)) = self.pings.remove(&pid) {
-                        self.message(&dst, &format!("{} {:?}", args[0], Instant::now() - t0)).await?;
+                        self.message(&dst, &format!("{} {:?}", args[0], Instant::now() - t0))
+                            .await?;
                     } else {
                         warn!("Could not find ping entry for pong: {msg:?}");
                     }
@@ -803,7 +871,9 @@ impl Control {
                             new_msg.to_string()
                         };
 
-                        self.client.send(ClientCommand::Message(dst, new_msg)).await?;
+                        self.client
+                            .send(ClientCommand::Message(dst, new_msg))
+                            .await?;
                     }
                 }
             }
@@ -830,11 +900,7 @@ impl Control {
             (line, "")
         };
 
-        let args = if args.len() > 1 {
-            &args[1..]
-        } else {
-            args
-        };
+        let args = if args.len() > 1 { &args[1..] } else { args };
 
         match cmd {
             "help" => {
@@ -843,12 +909,16 @@ impl Control {
 
             "quote" => {
                 info!("raw command '{args}'");
-                self.client.send(ClientCommand::RawMessage(format!("{args}\r\n"))).await?;
+                self.client
+                    .send(ClientCommand::RawMessage(format!("{args}\r\n")))
+                    .await?;
             }
 
             _ => {
                 info!("raw command '{line}'");
-                self.client.send(ClientCommand::RawMessage(format!("{line}\r\n"))).await?;
+                self.client
+                    .send(ClientCommand::RawMessage(format!("{line}\r\n")))
+                    .await?;
             }
         }
 
@@ -889,8 +959,10 @@ pub(crate) async fn task(
             ($get_msg:expr) => {
                 if let Some(msg) = &$get_msg {
                     match msg {
-                        ControlCommand::Irc(msg) => if let Err(e) = ctrl.handle_irc_command(msg).await {
-                            error!("Client side error: {e:?}");
+                        ControlCommand::Irc(msg) => {
+                            if let Err(e) = ctrl.handle_irc_command(msg).await {
+                                error!("Client side error: {e:?}");
+                            }
                         }
 
                         ControlCommand::ServerQuit(reason) => {
@@ -900,7 +972,7 @@ pub(crate) async fn task(
                         }
                     }
                 }
-            }
+            };
         }
 
         if settings.no_stdin {
