@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use clap::Parser;
 use tokio::sync::mpsc::channel;
+use tokio::task::{Builder, JoinHandle};
 use tokio::time::sleep;
+use tokio::try_join;
 use tracing::{error, info};
 
 mod client;
@@ -76,16 +78,36 @@ async fn startup(args: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>
     let (control_send, client_recv) = channel(256);
     let (client_send, control_recv) = channel(256);
 
-    let cl = tokio::task::Builder::new().name("client").spawn(client::task(client_recv, client_send.clone(), args.clone()))?;
-    let ctrl = tokio::task::Builder::new().name("control").spawn(control::task(
+    let mut cl = Builder::new().name("client").spawn(client::task(
+        client_recv,
+        client_send.clone(),
+        args.clone(),
+    ))?;
+    let mut ctrl = Builder::new().name("control").spawn(control::task(
         control_recv,
         control_send.clone(),
         args.clone(),
     ))?;
 
-    tokio::select! {
-        e = cl => { e??; }
-        e = ctrl => { e??; }
+    // Join tasks and report errors
+    async fn join_tasks(
+        cl: &mut JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>,
+        ctrl: &mut JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let (clr, ctrlr) = try_join!(cl, ctrl)?;
+        clr?;
+        ctrlr?;
+        Ok(())
+    }
+
+    match join_tasks(&mut cl, &mut ctrl).await {
+        Ok(_) => (),
+        Err(e) => {
+            error!("A task returned an error: {:?}", e);
+            // try aborting ...
+            cl.abort();
+            ctrl.abort();
+        }
     }
 
     Ok(())
