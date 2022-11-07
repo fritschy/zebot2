@@ -863,6 +863,7 @@ pub(crate) async fn task(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
     let mut line = String::with_capacity(1024);
+    let mut vline = Vec::with_capacity(1024);
 
     let mut ctrl = Control {
         startup: Instant::now(),
@@ -875,12 +876,12 @@ pub(crate) async fn task(
 
     debug!("settings={settings:#?}");
 
-    loop {
-        {  // cleanup pings, not sure if this is really necessary though.
+    while !client.is_closed() {
+        {
+            // cleanup pings, not sure if this is really necessary though.
             let now = Instant::now();
-            ctrl.pings.retain(|_a, b| {
-                ! (now > b.1 && now - b.1 > Duration::from_secs(1))
-            });
+            ctrl.pings
+                .retain(|_a, b| !(now > b.1 && now - b.1 > Duration::from_secs(1)));
         }
 
         // paste this code in their respective places below
@@ -905,12 +906,15 @@ pub(crate) async fn task(
         if settings.no_stdin {
             handle_recv!(cmd.recv().await);
         } else {
+            vline.clear();
+            line.clear();
+
             tokio::select! {
                 msg = cmd.recv() => {
                     handle_recv!(msg);
                 }
 
-                n = stdin.read_line(&mut line) => {
+                n = stdin.read_until(b'\n', &mut vline) => {
                     match n {
                         Err(_) => {
                             warn!("Error reading from stdin... quitting");
@@ -922,7 +926,9 @@ pub(crate) async fn task(
                             client.send(ClientCommand::Quit).await?;
                             break;
                         }
-                        Ok(_) => (),
+                        Ok(_) => {
+                            line += &String::from_utf8_lossy(&vline).to_string();
+                        },
                     }
 
                     let stripped = line.strip_suffix('\n').unwrap_or(&line);
