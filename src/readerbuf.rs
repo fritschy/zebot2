@@ -3,20 +3,26 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
-pub(crate) struct ReaderBuf {
-    pub(crate) buf: Vec<u8>,
-    pub(crate) last: RefCell<Vec<u8>>,
+pub struct ReaderBuf {
+    pub buf: Vec<u8>,
+    pub last: RefCell<Vec<u8>>,
+}
+
+impl Default for ReaderBuf {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ReaderBuf {
-    pub(crate) fn new() -> Self {
-        ReaderBuf {
+    pub fn new() -> Self {
+        Self {
             buf: vec![0; 4096],
             last: Default::default(),
         }
     }
 
-    pub(crate) fn fill_from_last(&mut self) -> usize {
+    pub fn fill_from_last(&mut self) -> usize {
         let len = self.last.borrow().len();
         if len > 0 {
             let l = &mut self.last.borrow_mut();
@@ -29,14 +35,14 @@ impl ReaderBuf {
         }
     }
 
-    pub(crate) fn push_to_last(&self, i: &[u8]) {
+    pub fn push_to_last(&self, i: &[u8]) {
         let l = &mut self.last.borrow_mut();
         let len = i.len();
         l.resize(len, 0);
         l[..len].copy_from_slice(i);
     }
 
-    pub(crate) async fn read_from(
+    pub async fn read_from(
         &mut self,
         source: &mut TlsStream<TcpStream>,
     ) -> Result<usize, std::io::Error> {

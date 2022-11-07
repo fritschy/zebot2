@@ -392,13 +392,13 @@ macro_rules! return_if_handled {
 }
 
 #[derive(Debug)]
-pub(crate) enum ControlCommand {
+pub enum ControlCommand {
     Irc(irc2::Message),
     ServerQuit(String),
 }
 
 #[derive(Debug)]
-struct Control {
+pub struct Control {
     startup: Instant,
     settings: Arc<Settings>,
     client: Sender<ClientCommand>,
@@ -410,14 +410,14 @@ struct Control {
 }
 
 impl Control {
-    async fn message(&self, dst: &str, msg: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn message(&self, dst: &str, msg: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.client
             .send(ClientCommand::Message(dst.to_string(), msg.to_string()))
             .await?;
         Ok(())
     }
 
-    async fn handle_command_uptime(
+    pub async fn handle_command_uptime(
         &self,
         dst: &str,
     ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
@@ -451,7 +451,7 @@ impl Control {
         Ok(HandlerResult::Handled)
     }
 
-    async fn handle_zebot_command(
+    pub async fn handle_zebot_command(
         &mut self,
         msg: &Message,
         dst: &str,
@@ -512,7 +512,7 @@ impl Control {
         Ok(HandlerResult::NotInterested)
     }
 
-    async fn zebot_answer(
+    pub async fn zebot_answer(
         &mut self,
         msg: &irc2::Message,
         dst: &str,
@@ -545,7 +545,7 @@ impl Control {
     }
 
     // Handle a "good bot" message, let's not talk about efficiency here...
-    async fn handle_good_bot(
+    pub async fn handle_good_bot(
         &mut self,
         msg: &Message,
         text: &str,
@@ -628,7 +628,7 @@ impl Control {
         Ok(false)
     }
 
-    async fn handle_japanese_text(
+    pub async fn handle_japanese_text(
         &mut self,
         msg: &Message,
         text: &str,
@@ -658,7 +658,7 @@ impl Control {
         Ok(())
     }
 
-    async fn handle_privmsg(
+    pub async fn handle_privmsg(
         &mut self,
         msg: &irc2::Message,
     ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
@@ -719,7 +719,7 @@ impl Control {
         Ok(HandlerResult::NotInterested)
     }
 
-    async fn logon(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn logon(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.client
             .send(ClientCommand::Logon {
                 nick: self.settings.nickname.clone(),
@@ -737,7 +737,7 @@ impl Control {
         Ok(())
     }
 
-    async fn nickserv_identify(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn nickserv_identify(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         if let Some(pwfile) = &self.settings.password_file {
             match tokio::fs::File::open(&pwfile).await {
                 Ok(mut f) => {
@@ -757,7 +757,7 @@ impl Control {
         Ok(())
     }
 
-    async fn handle_irc_command(
+    pub async fn handle_irc_command(
         &mut self,
         msg: &irc2::Message,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -811,7 +811,7 @@ impl Control {
         Ok(())
     }
 
-    async fn handle_substitute_command(
+    pub async fn handle_substitute_command(
         &mut self,
         msg: &Message,
     ) -> Result<HandlerResult, Box<dyn Error + Send + Sync>> {
@@ -892,7 +892,7 @@ impl Control {
         Ok(HandlerResult::Handled)
     }
 
-    async fn handle_command(&mut self, line: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn handle_command(&mut self, line: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         let line = &line[1..];
         let (cmd, args) = if let Some(space) = line.find(' ') {
             line.split_at(space)
@@ -926,7 +926,7 @@ impl Control {
     }
 }
 
-pub(crate) async fn task(
+pub async fn task(
     mut cmd: Receiver<ControlCommand>,
     client: Sender<ClientCommand>,
     settings: Arc<Settings>,

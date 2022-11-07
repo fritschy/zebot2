@@ -5,7 +5,7 @@ use std::io;
 use std::io::{BufReader, Read};
 use tracing::error;
 
-pub(crate) fn text_box<T: Display, S: Display>(
+pub fn text_box<T: Display, S: Display>(
     mut lines: impl Iterator<Item = T>,
     header: Option<S>,
 ) -> impl Iterator<Item = String> {
@@ -32,11 +32,11 @@ pub(crate) fn text_box<T: Display, S: Display>(
     })
 }
 
-pub(crate) fn is_json_flag_set(jv: &JsonValue) -> bool {
+pub fn is_json_flag_set(jv: &JsonValue) -> bool {
     jv.as_bool().unwrap_or(false) || jv.as_number().unwrap_or_else(|| 0.into()) != 0
 }
 
-pub(crate) fn parse_substitution(re: &str) -> Option<(String, String, String)> {
+pub fn parse_substitution(re: &str) -> Option<(String, String, String)> {
     let mut s = 0; // state, see below, can only increment
     let mut sep = '\0';
     let mut pat = String::with_capacity(re.len());
@@ -104,7 +104,7 @@ pub fn zebot_version() -> String {
     }
 }
 
-pub(crate) fn greet(nick: &str) -> String {
+pub fn greet(nick: &str) -> String {
     const PATS: &[&str] = &[
         "Hey {}!",
         "Moin {}, o/",
@@ -122,7 +122,7 @@ pub(crate) fn greet(nick: &str) -> String {
     s.to_string().replace("{}", nick)
 }
 
-pub(crate) fn nag_user(nick: &str) -> String {
+pub fn nag_user(nick: &str) -> String {
     fn doit(nick: &str) -> Result<String, io::Error> {
         let nick = nick.replace(|x: char| !x.is_alphanumeric(), "_");
         let nag_file = format!("nag-{}.txt", nick);
@@ -149,7 +149,7 @@ pub(crate) fn nag_user(nick: &str) -> String {
 // possible, primarily in order to produce the same output on 32-bit and 64-bit
 // platforms.
 #[inline]
-fn gen_index<R: Rng<8> + ?Sized>(rng: &mut R, ubound: usize) -> usize {
+pub fn gen_index<R: Rng<8> + ?Sized>(rng: &mut R, ubound: usize) -> usize {
     if ubound <= (core::u32::MAX as usize) {
         rng.generate_range(0..ubound as u32) as usize
     } else {

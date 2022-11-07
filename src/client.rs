@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, error, info};
 
 #[derive(Debug)]
-pub(crate) enum ClientCommand {
+pub enum ClientCommand {
     Message(String, String),
     Join(String),
     Quit,
@@ -76,7 +76,7 @@ async fn sock_send<T: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
-pub(crate) async fn task(
+pub async fn task(
     mut cmd: Receiver<ClientCommand>,
     ctrl: Sender<ControlCommand>,
     settings: Arc<Settings>,
