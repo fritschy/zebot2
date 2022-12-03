@@ -326,7 +326,8 @@ async fn youtube_title(
         .filter(|&x| x.starts_with("https://") || x.starts_with("http://"))
     {
         if yt_re.is_match(url) {
-            let mut cmd_builder = Command::new("python3");
+            let py = settings.get_extra("python").unwrap_or("python3");
+            let mut cmd_builder = Command::new(py);
             if let Some(youtube_dl_dir) = settings.get_extra("youtube_dl_dir") {
                 cmd_builder.current_dir(youtube_dl_dir);
             }
@@ -337,6 +338,7 @@ async fn youtube_title(
 
             if let Ok(output) = cmd_builder
                 .args([
+                    "-B", // do not write .pyc files on import
                     "-m",
                     module,
                     "--quiet",
