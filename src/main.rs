@@ -53,14 +53,6 @@ async fn startup(args: Arc<Settings>) -> Result<(), Box<dyn Error + Send + Sync>
 }
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .enable_time()
-        .build()?
-        .block_on(async_main())
-}
-
-async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     use clap::Parser;
 
     let args = Settings::parse();
@@ -98,15 +90,25 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     if args.restart {
         loop {
-            if let Err(e) = startup(args.clone()).await {
-                error!("There was an unrecoverable error: {e:?}");
-            }
-            info!("Sleeping for 10 seconds before restart...");
-            sleep(Duration::from_secs(10)).await;
-            info!("Starting again!");
+            tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()?
+                .block_on(async {
+                    if let Err(e) = startup(args.clone()).await {
+                        error!("There was an unrecoverable error: {e:?}");
+                    }
+                    info!("Sleeping for 10 seconds before restart...");
+                    sleep(Duration::from_secs(10)).await;
+                    info!("Starting again!");
+                });
         }
     } else {
-        startup(args).await?;
+        tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()?
+            .block_on(async { startup(args).await })?;
     }
 
     Ok(())
