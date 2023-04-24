@@ -696,8 +696,6 @@ impl Control {
 
         url_saver(msg, self.settings.clone()).await?;
 
-        return_if_handled!(self.handle_substitute_command(msg).await?);
-
         if text.starts_with('!') && text.len() > 1 && text.as_bytes()[1].is_ascii_alphanumeric() {
             let textv = text.split_ascii_whitespace().collect::<Vec<_>>();
             return_if_handled!(
@@ -705,6 +703,8 @@ impl Control {
                     .await?
             );
         }
+
+        return_if_handled!(self.handle_substitute_command(msg).await?);
 
         if text
             .split(|c: char| {
