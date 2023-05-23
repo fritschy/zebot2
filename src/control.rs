@@ -170,11 +170,32 @@ async fn callout(
                                 "Handler failed with code {}: {p:?}",
                                 p.status.code().unwrap()
                             );
-                            send.send(ClientCommand::Message(
-                                dst,
-                                "Somehow, that did not work...".to_string(),
-                            ))
-                            .await?;
+                            if p.stdout.is_empty() {
+                                send.send(ClientCommand::Message(
+                                    dst,
+                                    "Somehow, that did not work...".to_string(),
+                                ))
+                                .await?;
+                            } else {
+                                if let Some(x) = String::from_utf8(p.stdout)
+                                    .ok()
+                                    .and_then(|s| json::parse(&s).ok())
+                                {
+                                    if let Some(x) = x.entries().filter(|x| x.0 == "error").next() {
+                                        send.send(ClientCommand::Message(
+                                            dst,
+                                            format!("Handler failed: {}", x.1),
+                                        ))
+                                        .await?;
+                                    } else {
+                                        send.send(ClientCommand::Message(
+                                            dst,
+                                            "Handler failed w/o error".to_string(),
+                                        ))
+                                        .await?;
+                                    }
+                                }
+                            }
                             return Ok(());
                         }
 
