@@ -144,7 +144,7 @@ async fn callout(
             ) -> Result<(), Box<dyn Error + Send + Sync>> {
                 let s = Instant::now();
                 let cmd = timeout(
-                    Duration::from_secs(30),
+                    Duration::from_secs(60),
                     Command::new(path.as_ref()).args(&args).output(),
                 )
                 .await;
