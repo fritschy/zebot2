@@ -6,34 +6,27 @@ import socket
 import json
 import re
 
-try:
-    c=socket.create_connection(('10.0.0.126', 8001))
-except:
-    handler_exit(1, error="Could not connect to ask service")
-
-try:
-    c.send(get_args().encode())
-except:
-    handler_exit(1, error="Could not communicate to ask service")
-
-try:
-    r=c.recv(8192)
-except:
-    handler_exit(1, error="Could not receive response")
-
 def split_lines(x):
     # try to split enumerations
     lines = re.split(r"\d+\. ", x)
     if len(lines) > 2:
         return [lines[0], *['{}. {}'.format(i+1, l) for (i, l) in enumerate(lines[1:])]]
     # try to split bullet lists
-    lines = x.split('- ')
-    if len(lines) > 2:
-        return [lines[0], *['- ' + l for l in lines[1:]]]
+    for split in ('- ', '* '):
+        lines = x.split(split)
+        if len(lines) > 2:
+            return [lines[0], *[split + l for l in lines[1:]]]
     # just return as a list of one
     return [x]
 
-j=json.loads(r.decode())
+try:
+    c=socket.create_connection(('10.0.0.126', 8001))
+except:
+    handler_exit(1, error="Could not connect to ask service")
+
+c.send(get_args().encode())
+r=c.recv(8192).decode()
+j=json.loads(r)
 lines = split_lines(j['choices'][0]['message']['content'].strip())
 handler_exit(0, lines=lines, box=1, wrap_single_lines=1, title=j['model'])
 
