@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+
+from handler_lib import handler_exit, get_split_args, get_to, get_from
+import ollama
+import json
+import os
+import time
+import urllib.request
+
+from ollama_config import *
+
+model = DEFAULT_MODEL
+a = get_split_args()
+
+class Context(object):
+    def __init__(self, fname: str):
+        self.file = fname
+        self.data = {}
+
+        try:
+            with open(fname) as f:
+                self.data = json.loads(f.read())
+        except:
+            pass
+
+    @staticmethod
+    def key(model: str) -> str:
+        return f'{model}/{get_to()}'
+
+    @staticmethod
+    def default():
+        return {'time': time.time(), 'context': [], 'history': []}
+
+    def time(self, model: str) -> float:
+        x = self.data.get(Context.key(model))
+        if x is None:
+            return 0.0
+        return x['time']
+
+    def clear_history(self, model):
+        self.data[Context.key(model)] = Context.default()
+
+    def history(self, model: str):
+        c = self.data.get(Context.key(model), Context.default())
+        if c['time'] + CLEAR_CONTEXT_AFTER_SECONDS < time.time():
+            print('clearing context')
+            self.data[Context.key(model)] = Context.default()
+            return []
+        return c.get('history', [])
+
+    def add_to_history(self, model, msg):
+        c = self.data.get(Context.key(model), Context.default())
+        h = c.get('history', [])
+        h.append(msg)
+        c['history'] = h
+        self.data[Context.key(model)] = c
+
+    def update_file(self):
+        with open(self.file, 'w') as f:
+            f.write(json.dumps(self.data))
+
+    def len(self, model: str) -> int:
+        return len(self.data.get(Context.key(model), Context.default())['context'])
+
+CONTEXT = Context(CONTEXT_FILE)
+
+def list_models_with_timeout(host: str, timeout: int) -> dict[str, list[int]]:
+    r = urllib.request.urlopen(f'http://{host}:11434/api/tags', timeout=timeout)
+    j = json.loads(r.read())
+    return j
+
+def check_arg(a: list[str]) -> None:
+    if len(a) == 0 or len(' '.join(a).strip()) == 0:
+        handler_exit(0, box=1, lines=[f'Was there a question?'], title='error: no question')
+
+def clear_context(model: str) -> None:
+    CONTEXT.clear_history(model)
+    CONTEXT.update_file()
+
+# all the models we have
+models = []
+
+# host to model
+hm = {}
+# model to host
+mh = {}
+
+# try a couple of hosts
+for i in OLLAMA_HOSTS:
+    try:
+        ms = [x['name'].split(':latest')[0] for x in list_models_with_timeout(i, 1)['models']]
+        for m in ms:
+            ml = mh.get(m)
+            if ml is None:
+                mh[m] = []
+                ml = mh[m]
+            ml.append(i)
+        hm[i] = ms
+        models += ms
+    except:
+        continue
+
+models = list(set(models))
+models.sort()
+
+if models is None or len(models) == 0:
+    handler_exit(0, box=1, lines=['No ollama server available.', 'Try again later or ask my master.'], title='error: no server')
+
+check_arg(a)
+
+need_to_clear_context = False
+
+while len(a) > 0 and a[0].startswith('-'):
+    ma = a[0][1:]
+    del a[0]
+
+    # clear context
+    if ma in ('c', 'clear', '-clear'):
+        need_to_clear_context = True
+        continue
+
+    if ma in ('h', '-help', 'help'):
+        handler_exit(0, box=1, lines=['Usage: !ask [-c|--clear] [-$model] $question', '',
+                                      'Valid models are:',
+                                      *list(map(lambda x: '  -'+x+('' if x != model else '  (default)'),
+                                          models))], title='usage')
+
+    if ma in models:
+        model = ma
+    else:
+        handler_exit(0, box=1, lines=[f'Valid models are {", ".join(map(lambda x: "-"+x, models))}'],
+                     title='error: unknown model')
+
+    break
+
+if need_to_clear_context:
+    clear_context(model)
+    if len(a) == 0 or len(' '.join(a).strip()) == 0:
+        handler_exit(0, lines=['Context cleared'])
+
+try:
+    try:
+        if os.stat(CONTEXT_FILE).st_mtime + CLEAR_CONTEXT_AFTER_SECONDS < time.time():
+            clear_context(model)
+    except:
+        pass
+except:
+    pass
+
+# we fumbled around with args, so check again
+check_arg(a)
+host = mh[model][0]
+
+messages = []
+sys = SYSTEM_PROMPTS.get('llama3')
+if sys:
+    messages.append({'role': 'system', 'content': sys()})
+messages += CONTEXT.history(model)
+usermsg = {'role': 'user', 'content': ' '.join(a)}
+messages += [usermsg]
+
+if os.isatty(0):
+    print(messages)
+
+r = ollama.Client(host=f'http://{host}:11434').chat(
+        model=model,
+        messages=messages)
+
+m = r['message']
+hlen = len(CONTEXT.history(model))
+
+CONTEXT.add_to_history(model, usermsg)
+CONTEXT.add_to_history(model, m)
+CONTEXT.update_file()
+
+handler_exit(0, lines=list(map(str.strip, r['message']['content'].splitlines())), box=1, wrap_single_lines=1, title=f'response: {host}/{model} +c{hlen}')
+
+# vim:set ft=python:
