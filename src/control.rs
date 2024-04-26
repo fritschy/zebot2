@@ -371,8 +371,8 @@ async fn youtube_title(
                 .output()
                 .await
             {
-                let err = String::from_utf8_lossy(output.stderr.as_ref());
-                if !err.is_empty() {
+                if !output.status.success() {
+                    let err = String::from_utf8_lossy(output.stderr.as_ref());
                     error!("Got error from youtube-dl: {}", err);
                     client
                         .send(ClientCommand::Message(
