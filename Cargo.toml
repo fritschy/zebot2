@@ -13,11 +13,11 @@ tracing = { version = "0.1", default-features = false, features = ["log"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"]}
 tokio-rustls = { version = "0.23", default-features = false }
 webpki-roots = { version = "0.22" }
-console-subscriber = { version = "0.1.6" }
+console-subscriber = { version = "0.2" }
 regex = "1.5"
 leaky-bucket-lite = { version = "0.5", features = ["tokio"], default-features = false }
 json = "0.12"
-textwrap = { version = "0.15", features = [], default-features = false }
+textwrap = { version = "0.16", features = [], default-features = false }
 url = "2.2"
 chrono = { version = "0.4", features = ["clock"], default-features = false }
 nanorand = { version = "0.7", features = ["getrandom", "rdseed", "wyrand", "tls"], default-features = false }
